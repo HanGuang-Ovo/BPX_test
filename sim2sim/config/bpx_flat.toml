@@ -5,7 +5,7 @@ locomotion_policy = "logs/rsl_rl/bpx_locomotion/2026-09-15_13-15-43/exported/pol
 stand_policy = "logs/rsl_rl/bpx_stand/2026-09-15_00-13-24/exported/policy.onnx"
 # 状态驱动版 Init：起身过程 command 槽位恒为零，由完成状态切换到 Stand。
 # 23-27-32 在 MuJoCo 中持续后仰并翻倒，暂时回退到可完成起身的上一版。
-init_policy = "logs/rsl_rl/bpx_init/2026-09-15_18-26-34_stable/exported/policy.onnx"
+init_policy = "logs/rsl_rl/bpx_init/2026-09-16_22-16-56_stable/exported/policy.onnx"
 # 保留 TorchScript 导出，供 --backend torchscript 和导出一致性检查使用。
 torchscript_policy = "logs/rsl_rl/bpx_flat/2026-09-08_11-28-30/exported/policy.pt"
 

@@ -104,9 +104,11 @@ class BpxStandRewardsCfg:
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-1.0)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-5.0)
     base_height_l2 = RewTerm(func=mdp.base_height_l2, weight=-5.0, params={"target_height": 0.40})
+
+    #  足端滑动奖励
     feet_slide = RewTerm(
         func=mdp.feet_slide,
-        weight=-0.5,
+        weight=-1.5,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_toe_link"),
             "asset_cfg": SceneEntityCfg("robot", body_names=".*_toe_link"),

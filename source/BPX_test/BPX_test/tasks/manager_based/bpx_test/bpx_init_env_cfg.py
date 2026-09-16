@@ -113,14 +113,19 @@ class BpxInitEventCfg(BpxCommonEventCfg):
 class BpxInitRewardsCfg:
     """用状态反馈塑造抬升、四足支撑、正常站姿和稳定交接。"""
 
-    # 实际高度进度是线性的，即使机器人离目标很远也保留梯度；姿态只作为安全门控，
-    # 避免腹部趴平时仅凭机身水平获得固定奖励。
+    # 机身抬升奖励
+    # 机身高度从趴卧的 0.13 m 提升到 0.40 m，奖励逐渐增加。
     height_progress = RewTerm(
         func=mdp.upright_height_progress,
         weight=4.0,
-        params={"start_height": INIT_START_HEIGHT, "target_height": 0.40, "orientation_std": 0.35},
+        params={
+            "start_height": INIT_START_HEIGHT, 
+            "target_height": 0.40, 
+            "orientation_std": 0.35
+        },
     )
 
+    # 关节姿态奖励
     # 机身抬得越高，四条腿恢复默认站姿的收益越大，直接压制只伸直两条腿的局部最优。
     joint_posture = RewTerm(
         func=mdp.joint_posture_progress_exp,
@@ -174,13 +179,14 @@ class BpxInitRewardsCfg:
         },
     )
 
+    # 起身任务的“成功判定”奖励
     # 成功奖励随时可以激活，但必须同时满足高度、姿态、四足接触和前足宽度。
     recovered = RewTerm(
         func=mdp.recovered_posture_with_contact,
-        weight=5.0,
+        weight=10.0,
         params={
             "minimum_height": 0.36,
-            "maximum_tilt": 0.12,       # 0.12 rad ≈ 7°，避免机身明显倾斜。
+            "maximum_tilt": 0.1,       # 0.1 rad ≈ 5.7°，避免机身明显倾斜。
             "threshold": 1.0,
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_toe_link"),
             "minimum_front_width": MINIMUM_FRONT_FEET_WIDTH,
@@ -195,10 +201,10 @@ class BpxInitRewardsCfg:
     # 四足完成起身后立即奖励低机身速度，不在起身过程中抑制必要运动。
     recovered_stability = RewTerm(
         func=mdp.recovered_stability_with_contact,
-        weight=3.0,
+        weight=5.0,
         params={
             "minimum_height": 0.36,
-            "maximum_tilt": 0.12,       # 0.12 rad ≈ 7°，避免机身明显倾斜。
+            "maximum_tilt": 0.1,       # 0.1 rad ≈ 5.7°，避免机身明显倾斜。
             "linear_velocity_std": 0.30,
             "angular_velocity_std": 0.45,
             "threshold": 1.0,
