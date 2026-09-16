@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="BPX 四足机器人训练、策略导出、MuJoCo sim2sim 和 Supervisor 工程思维导图">
+  <title>BPX 工程思维导图</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --surface: rgba(13, 28, 47, 0.92);
+      --surface-2: #10243b;
+      --surface-3: #142d49;
+      --text: #eef6ff;
+      --muted: #9db1c7;
+      --line: rgba(154, 180, 207, 0.18);
+      --cyan: #4dd8e6;
+      --blue: #6ea8fe;
+      --green: #65d69e;
+      --orange: #ffb45c;
+      --pink: #ef83c9;
+      --violet: #a993ff;
+      --red: #ff7474;
+      --shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 18% 0%, rgba(77, 216, 230, 0.13), transparent 28rem),
+        radial-gradient(circle at 87% 18%, rgba(169, 147, 255, 0.12), transparent 30rem),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+
+    a { color: inherit; }
+    button, input { font: inherit; }
+
+    .page {
+      width: min(1580px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 34px 0 60px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+      align-items: end;
+      margin-bottom: 24px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--cyan);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 5vw, 62px);
+      line-height: 1.06;
+      letter-spacing: -0.04em;
+    }
+
+    .hero p {
+      max-width: 840px;
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .status-card {
+      width: 290px;
+      padding: 16px 18px;
+      border: 1px solid rgba(101, 214, 158, 0.3);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(101, 214, 158, 0.12), rgba(13, 28, 47, 0.9));
+      box-shadow: var(--shadow);
+    }
+
+    .status-card strong { display: block; margin-bottom: 7px; color: var(--green); }
+    .status-card span { display: block; color: var(--muted); font-size: 13px; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 10px;
+      margin: 0 0 20px;
+    }
+
+    .stat {
+      min-height: 78px;
+      padding: 13px 15px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(13, 28, 47, 0.7);
+    }
+
+    .stat b { display: block; color: var(--text); font-size: 21px; }
+    .stat span { color: var(--muted); font-size: 12px; }
+
+    .toolbar {
+      position: sticky;
+      z-index: 20;
+      top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      align-items: center;
+      margin-bottom: 12px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: rgba(7, 17, 31, 0.88);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+    }
+
+    .search {
+      flex: 1 1 260px;
+      min-width: 180px;
+      height: 40px;
+      padding: 0 13px;
+      border: 1px solid rgba(110, 168, 254, 0.28);
+      border-radius: 10px;
+      outline: none;
+      background: var(--surface-2);
+      color: var(--text);
+    }
+
+    .search:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(110, 168, 254, 0.12); }
+
+    .tool-button {
+      height: 40px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface-2);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .tool-button:hover { border-color: rgba(77, 216, 230, 0.55); transform: translateY(-1px); }
+
+    .map-shell {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background:
+        linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px),
+        rgba(8, 19, 34, 0.72);
+      background-size: 28px 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .mindmap {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(440px, 1fr) 236px minmax(440px, 1fr);
+      gap: 48px;
+      align-items: center;
+      min-width: 1220px;
+      min-height: 1050px;
+      padding: 48px 38px;
+    }
+
+    #connectors {
+      position: absolute;
+      z-index: 0;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .side, .center { position: relative; z-index: 2; }
+    .side { display: flex; flex-direction: column; gap: 20px; }
+    .center { display: grid; place-items: center; min-height: 280px; }
+
+    .branch {
+      --branch: var(--cyan);
+      display: grid;
+      gap: 14px;
+      align-items: center;
+      padding: 10px;
+      border-radius: 18px;
+      transition: background 180ms ease;
+    }
+
+    .branch:hover { background: color-mix(in srgb, var(--branch) 5%, transparent); }
+    .left .branch { grid-template-columns: minmax(0, 1fr) 174px; }
+    .right .branch { grid-template-columns: 174px minmax(0, 1fr); }
+    .left .children { grid-column: 1; grid-row: 1; }
+    .left .branch-node { grid-column: 2; grid-row: 1; }
+    .right .branch-node { grid-column: 1; grid-row: 1; }
+    .right .children { grid-column: 2; grid-row: 1; }
+
+    .children {
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      transition: opacity 180ms ease;
+    }
+
+    .branch.collapsed .children { display: none; }
+
+    .node {
+      position: relative;
+      width: 100%;
+      padding: 11px 13px;
+      border: 1px solid color-mix(in srgb, var(--branch) 32%, var(--line));
+      border-radius: 13px;
+      outline: none;
+      background: linear-gradient(145deg, color-mix(in srgb, var(--branch) 8%, var(--surface-2)), var(--surface));
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.14);
+      transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+    }
+
+    .node:hover, .node:focus-visible {
+      z-index: 3;
+      border-color: var(--branch);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 28px color-mix(in srgb, var(--branch) 15%, rgba(0,0,0,0.2));
+    }
+
+    .node.selected { border-color: var(--branch); box-shadow: 0 0 0 3px color-mix(in srgb, var(--branch) 15%, transparent); }
+    .node.match { animation: pulse 1s ease-in-out infinite alternate; }
+
+    @keyframes pulse {
+      to { box-shadow: 0 0 0 4px color-mix(in srgb, var(--branch) 24%, transparent); }
+    }
+
+    .node strong { display: block; font-size: 13px; line-height: 1.28; }
+    .node small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.35; }
+
+    .branch-node {
+      min-height: 74px;
+      padding: 14px;
+      border-width: 1.5px;
+      background: linear-gradient(145deg, color-mix(in srgb, var(--branch) 18%, var(--surface-2)), var(--surface));
+    }
+
+    .branch-node strong { font-size: 15px; }
+    .branch-node::after {
+      position: absolute;
+      top: 9px;
+      right: 11px;
+      content: "−";
+      color: var(--branch);
+      font-weight: 900;
+    }
+    .branch.collapsed .branch-node::after { content: "+"; }
+
+    .root-node {
+      --branch: var(--cyan);
+      width: 224px;
+      min-height: 168px;
+      padding: 25px 20px;
+      border: 1px solid rgba(77, 216, 230, 0.7);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 30% 20%, rgba(110, 168, 254, 0.3), transparent 46%),
+        linear-gradient(145deg, #123456, #0a2038);
+      text-align: center;
+      box-shadow: 0 0 0 10px rgba(77, 216, 230, 0.035), 0 22px 70px rgba(0, 0, 0, 0.4);
+    }
+
+    .root-node strong { font-size: 22px; }
+    .root-node small { margin-top: 8px; font-size: 11px; }
+    .root-node .root-mark { display: block; margin-bottom: 5px; color: var(--cyan); font-size: 11px; letter-spacing: .16em; }
+
+    .detail-panel {
+      display: grid;
+      grid-template-columns: minmax(230px, .8fr) minmax(0, 1.7fr) minmax(240px, 1fr);
+      gap: 18px;
+      margin-top: 16px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .detail-panel h2 { margin: 3px 0 7px; font-size: 23px; }
+    .detail-panel h3 { margin: 0 0 8px; color: var(--muted); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+    .detail-panel p { margin: 0; color: var(--muted); font-size: 14px; }
+    .detail-meta { display: grid; gap: 12px; }
+    .io-card { padding: 12px 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(7, 17, 31, .42); }
+    .io-card b { display: block; margin-bottom: 3px; color: var(--text); font-size: 12px; }
+    .io-card span { color: var(--muted); font-size: 12px; }
+
+    .file-list { display: flex; flex-direction: column; gap: 8px; }
+    .file-link {
+      display: block;
+      overflow-wrap: anywhere;
+      padding: 9px 10px;
+      border: 1px solid rgba(110, 168, 254, 0.25);
+      border-radius: 10px;
+      background: rgba(110, 168, 254, 0.07);
+      color: #c9e0ff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      text-decoration: none;
+    }
+    .file-link:hover { border-color: var(--blue); }
+
+    .section-card {
+      margin-top: 20px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(13, 28, 47, 0.78);
+      box-shadow: var(--shadow);
+    }
+
+    .section-head { display: flex; gap: 18px; align-items: end; justify-content: space-between; margin-bottom: 18px; }
+    .section-head h2 { margin: 0; font-size: 22px; }
+    .section-head p { max-width: 750px; margin: 0; color: var(--muted); font-size: 13px; }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(130px, 1fr));
+      gap: 20px;
+      overflow-x: auto;
+      padding: 8px 3px 14px;
+    }
+
+    .step {
+      position: relative;
+      min-height: 112px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface-2);
+    }
+    .step:not(:last-child)::after {
+      position: absolute;
+      top: 45%;
+      right: -17px;
+      content: "→";
+      color: var(--cyan);
+      font-size: 20px;
+    }
+    .step b { display: block; margin-bottom: 6px; color: var(--cyan); font-size: 12px; }
+    .step strong { display: block; font-size: 13px; }
+    .step span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+
+    .state-layout { display: grid; grid-template-columns: 1.2fr .8fr; gap: 18px; }
+    .state-flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 18px; border-radius: 15px; background: rgba(7, 17, 31, .45); }
+    .state { padding: 10px 13px; border: 1px solid rgba(169,147,255,.36); border-radius: 999px; background: rgba(169,147,255,.10); font-size: 12px; font-weight: 800; }
+    .state.danger { border-color: rgba(255,116,116,.45); background: rgba(255,116,116,.10); }
+    .arrow { color: var(--muted); font-size: 12px; }
+    .note { padding: 16px; border-left: 3px solid var(--orange); border-radius: 10px; background: rgba(255,180,92,.07); color: var(--muted); font-size: 13px; }
+    .note strong { color: var(--orange); }
+
+    .reading-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .reading-item { padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); }
+    .reading-item em { display: block; margin-bottom: 8px; color: var(--green); font-style: normal; font-size: 11px; font-weight: 900; }
+    .reading-item b { display: block; font-size: 13px; }
+    .reading-item span { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+
+    footer { padding-top: 24px; color: var(--muted); text-align: center; font-size: 11px; }
+
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: 1fr; }
+      .status-card { width: 100%; }
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .detail-panel, .state-layout { grid-template-columns: 1fr; }
+      .reading-grid { grid-template-columns: repeat(2, 1fr); }
+      .section-head { display: block; }
+      .section-head p { margin-top: 8px; }
+    }
+
+    @media (max-width: 540px) {
+      .page { width: min(100% - 18px, 1580px); padding-top: 20px; }
+      .stats, .reading-grid { grid-template-columns: 1fr; }
+      .section-card { padding: 17px; }
+    }
+
+    @media print {
+      :root { color-scheme: light; --bg: #fff; --surface: #fff; --surface-2: #f7f9fc; --text: #132238; --muted: #52657a; --line: #dbe3ec; }
+      body { background: #fff; }
+      .page { width: 100%; padding: 0; }
+      .toolbar { display: none; }
+      .map-shell { overflow: visible; box-shadow: none; }
+      .mindmap { min-width: 0; transform: scale(.76); transform-origin: top left; width: 131%; margin-bottom: -220px; }
+      .detail-panel, .section-card, .status-card { box-shadow: none; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">BPX quadruped · architecture map</p>
+        <h1>BPX 工程思维导图</h1>
+        <p>从 Isaac Lab 多策略训练，到模型导出，再到 MuJoCo 中由手柄、Supervisor 和底层策略组成的闭环控制。点击节点可以查看职责、数据关系和对应源码。</p>
+      </div>
+      <aside class="status-card" aria-label="当前策略状态">
+        <strong>当前状态</strong>
+        <span>Locomotion：已有训练与导出模型</span>
+        <span>Stand：已有模型 · Init：趴卧起身任务待训练</span>
+      </aside>
+    </header>
+
+    <section class="stats" aria-label="核心接口摘要">
+      <div class="stat"><b>3</b><span>独立训练任务</span></div>
+      <div class="stat"><b>48</b><span>共同策略观测维度</span></div>
+      <div class="stat"><b>12</b><span>共同关节动作维度</span></div>
+      <div class="stat"><b>200 / 50 Hz</b><span>物理 / 策略频率</span></div>
+      <div class="stat"><b>5</b><span>Supervisor 行为状态</span></div>
+    </section>
+
+    <nav class="toolbar" aria-label="思维导图工具栏">
+      <input id="search" class="search" type="search" placeholder="搜索：奖励、手柄、ONNX、关节映射……" aria-label="搜索节点">
+      <button class="tool-button" id="expandAll" type="button">展开全部</button>
+      <button class="tool-button" id="collapseAll" type="button">收起末级</button>
+      <button class="tool-button" id="resetView" type="button">复位</button>
+      <button class="tool-button" type="button" onclick="window.print()">打印 / PDF</button>
+    </nav>
+
+    <section class="map-shell" id="mapShell" aria-label="BPX 工程思维导图画布">
+      <div class="mindmap" id="mindmap">
+        <svg id="connectors" aria-hidden="true"></svg>
+
+        <div class="side left">
+          <article class="branch" style="--branch: var(--cyan)">
+            <div class="children">
+              <button class="node" id="base-env" data-parent="training" data-key="baseEnv" type="button"><strong>公共环境配置</strong><small>机器人 · 场景 · 关节顺序 · 观测/动作</small></button>
+              <button class="node" id="locomotion-env" data-parent="training" data-key="locomotionEnv" type="button"><strong>Locomotion 行走任务</strong><small>随机速度指令 · 步态 · 速度跟踪</small></button>
+              <button class="node" id="stand-env" data-parent="training" data-key="standEnv" type="button"><strong>Stand 站立任务</strong><small>零 command · 防滑 · 抑制抖动</small></button>
+              <button class="node" id="init-env" data-parent="training" data-key="initEnv" type="button"><strong>Init 趴卧起身任务</strong><small>腿部收折 · 四足支撑 · 稳定交接</small></button>
+              <button class="node" id="gym-agents" data-parent="training" data-key="gymAgents" type="button"><strong>Gym 注册与 PPO 配置</strong><small>3 个任务 · 独立 experiment_name</small></button>
+            </div>
+            <button class="node branch-node" id="training" data-parent="root" data-key="training" type="button" aria-expanded="true"><strong>Isaac Lab 训练层</strong><small>定义“每个策略应该学什么”</small></button>
+          </article>
+
+          <article class="branch" style="--branch: var(--orange)">
+            <div class="children">
+              <button class="node" id="urdf" data-parent="assets" data-key="urdf" type="button"><strong>URDF + Mesh</strong><small>机器人结构、惯量、关节和几何源文件</small></button>
+              <button class="node" id="usd" data-parent="assets" data-key="usd" type="button"><strong>USD 资产</strong><small>Isaac Lab / PhysX 使用</small></button>
+              <button class="node" id="mjcf" data-parent="assets" data-key="mjcf" type="button"><strong>MJCF 模型</strong><small>MuJoCo 使用的机器人与地面</small></button>
+            </div>
+            <button class="node branch-node" id="assets" data-parent="root" data-key="assets" type="button" aria-expanded="true"><strong>机器人资产层</strong><small>同一物理机器人，两套仿真描述</small></button>
+          </article>
+
+          <article class="branch" style="--branch: var(--green)">
+            <div class="children">
+              <button class="node" id="train-script" data-parent="train-flow" data-key="trainScript" type="button"><strong>train.py</strong><small>并行环境 + RSL-RL PPO 训练</small></button>
+              <button class="node" id="play-script" data-parent="train-flow" data-key="playScript" type="button"><strong>play.py</strong><small>加载 checkpoint 并导出策略</small></button>
+              <button class="node" id="logs" data-parent="train-flow" data-key="logs" type="button"><strong>logs/rsl_rl</strong><small>checkpoint · 参数快照 · TensorBoard</small></button>
+            </div>
+            <button class="node branch-node" id="train-flow" data-parent="root" data-key="trainFlow" type="button" aria-expanded="true"><strong>训练与导出流程</strong><small>Env → model_x.pt → policy.onnx</small></button>
+          </article>
+        </div>
+
+        <div class="center">
+          <button class="node root-node selected" id="root" data-key="root" type="button">
+            <span class="root-mark">PROJECT ROOT</span>
+            <strong>BPX_test</strong>
+            <small>多策略训练<br>＋ sim2sim 部署<br>＋ 上层行为规划</small>
+          </button>
+        </div>
+
+        <div class="side right">
+          <article class="branch" style="--branch: var(--blue)">
+            <button class="node branch-node" id="sim-core" data-parent="root" data-key="simCore" type="button" aria-expanded="true"><strong>MuJoCo sim2sim 核心</strong><small>闭环推理与 PD 控制</small></button>
+            <div class="children">
+              <button class="node" id="sim-config" data-parent="sim-core" data-key="simConfig" type="button"><strong>config.py + TOML</strong><small>集中保存接口、路径、PD 和阈值</small></button>
+              <button class="node" id="robot-adapter" data-parent="sim-core" data-key="robotAdapter" type="button"><strong>robot.py</strong><small>状态读取 · 关节映射 · 观测 · PD</small></button>
+              <button class="node" id="policy-loader" data-parent="sim-core" data-key="policyLoader" type="button"><strong>policy.py</strong><small>ONNX / TorchScript / zero 后端</small></button>
+              <button class="node" id="runner" data-parent="sim-core" data-key="runner" type="button"><strong>runner.py</strong><small>50 Hz 策略 + 200 Hz 物理闭环</small></button>
+            </div>
+          </article>
+
+          <article class="branch" style="--branch: var(--violet)">
+            <button class="node branch-node" id="behavior" data-parent="root" data-key="behavior" type="button" aria-expanded="true"><strong>输入与行为规划</strong><small>从用户意图到策略选择</small></button>
+            <div class="children">
+              <button class="node" id="gamepad" data-parent="behavior" data-key="gamepad" type="button"><strong>gamepad.py</strong><small>Linux input-event → [vx, vy, wz]</small></button>
+              <button class="node" id="supervisor" data-parent="behavior" data-key="supervisor" type="button"><strong>supervisor.py</strong><small>迟滞 · 驻留时间 · 未站立/Init 判断</small></button>
+              <button class="node" id="behaviors" data-parent="behavior" data-key="behaviors" type="button"><strong>behaviors.py</strong><small>状态 → locomotion / stand / Init</small></button>
+              <button class="node" id="transition" data-parent="behavior" data-key="transition" type="button"><strong>transition.py</strong><small>command 限速 + action 平滑混合</small></button>
+            </div>
+          </article>
+
+          <article class="branch" style="--branch: var(--pink)">
+            <button class="node branch-node" id="contract" data-parent="root" data-key="contract" type="button" aria-expanded="true"><strong>跨仿真接口契约</strong><small>多策略能安全切换的前提</small></button>
+            <div class="children">
+              <button class="node" id="observation" data-parent="contract" data-key="observation" type="button"><strong>48 维观测</strong><small>速度 · 重力 · command · 关节 · 上一动作</small></button>
+              <button class="node" id="action" data-parent="contract" data-key="action" type="button"><strong>12 维动作</strong><small>默认角 + 0.5 × action</small></button>
+              <button class="node" id="joint-order" data-parent="contract" data-key="jointOrder" type="button"><strong>唯一关节顺序</strong><small>训练、导出和 MuJoCo 必须逐项一致</small></button>
+              <button class="node" id="timing" data-parent="contract" data-key="timing" type="button"><strong>时序与控制参数</strong><small>dt=.005 · decimation=4 · Kp/Kd</small></button>
+            </div>
+          </article>
+
+          <article class="branch" style="--branch: var(--red)">
+            <button class="node branch-node" id="validation" data-parent="root" data-key="validation" type="button" aria-expanded="true"><strong>验证与知识沉淀</strong><small>定位训练—部署差异</small></button>
+            <div class="children">
+              <button class="node" id="setup-check" data-parent="validation" data-key="setupCheck" type="button"><strong>基础检查</strong><small>MJCF · 映射 · 维度 · 零动作 PD</small></button>
+              <button class="node" id="policy-check" data-parent="validation" data-key="policyCheck" type="button"><strong>策略导出检查</strong><small>TorchScript ↔ ONNX 输出对比</small></button>
+              <button class="node" id="trajectory-check" data-parent="validation" data-key="trajectoryCheck" type="button"><strong>跨仿真轨迹对拍</strong><small>Isaac probe ↔ MuJoCo CSV</small></button>
+              <button class="node" id="tests-docs" data-parent="validation" data-key="testsDocs" type="button"><strong>测试与文档</strong><small>23 项回归测试 · 工作流 · 映射指南</small></button>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="detail-panel" id="detailPanel" aria-live="polite">
+      <div>
+        <p class="eyebrow" id="detailCategory">PROJECT</p>
+        <h2 id="detailTitle">BPX_test 工程</h2>
+        <p id="detailText">选择思维导图中的节点，这里会显示它在系统中的职责和上下游关系。</p>
+      </div>
+      <div class="detail-meta">
+        <div class="io-card"><b>输入 / 依赖</b><span id="detailInput">机器人资产、训练任务定义、用户速度指令</span></div>
+        <div class="io-card"><b>输出 / 去向</b><span id="detailOutput">底层策略模型、MuJoCo 关节目标、验证数据</span></div>
+      </div>
+      <div>
+        <h3>对应文件（点击打开）</h3>
+        <div class="file-list" id="detailFiles"></div>
+      </div>
+    </section>
+
+    <section class="section-card">
+      <div class="section-head">
+        <h2>运行时端到端主链路</h2>
+        <p>这条链路解释“手柄为什么不会直接控制电机”：手柄只产生速度意图，真正的关节动作由当前底层策略根据机器人反馈计算。</p>
+      </div>
+      <div class="pipeline">
+        <div class="step"><b>01 输入</b><strong>手柄 / CLI</strong><span>raw [vx, vy, wz]</span></div>
+        <div class="step"><b>02 决策</b><strong>Supervisor</strong><span>选择行为并过滤 command</span></div>
+        <div class="step"><b>03 路由</b><strong>BehaviorPolicies</strong><span>选择 locomotion / stand / Init</span></div>
+        <div class="step"><b>04 感知</b><strong>robot.state()</strong><span>读取基座和 12 个关节状态</span></div>
+        <div class="step"><b>05 推理</b><strong>48 → Policy → 12</strong><span>构造观测并执行 ONNX</span></div>
+        <div class="step"><b>06 过渡</b><strong>ActionBlender</strong><span>切策略时连续混合动作</span></div>
+        <div class="step"><b>07 控制</b><strong>PD + 力矩限制</strong><span>q_target → τ，限制 ±30 Nm</span></div>
+        <div class="step"><b>08 仿真</b><strong>MuJoCo.step()</strong><span>推进状态并回到第 04 步</span></div>
+      </div>
+    </section>
+
+    <section class="section-card">
+      <div class="section-head">
+        <h2>Supervisor 状态机</h2>
+        <p>普通切换由 command 活跃度、迟滞阈值和持续时间决定；跌倒检测的优先级高于普通行为切换。</p>
+      </div>
+      <div class="state-layout">
+        <div class="state-flow">
+          <span class="state">STAND</span><span class="arrow">明确运动指令 →</span>
+          <span class="state">WALK</span><span class="arrow">指令归零 →</span>
+          <span class="state">STOPPING</span><span class="arrow">实际速度稳定 →</span>
+          <span class="state">STAND</span>
+          <span class="arrow">任意正常状态跌倒 →</span>
+          <span class="state">INIT</span><span class="arrow">高度/姿态稳定 → STAND</span>
+          <span class="state danger">DISABLED</span><span class="arrow">无 Init 策略或状态异常</span>
+        </div>
+        <div class="note"><strong>关键区别：</strong>状态机决定“运行哪个策略”和“给策略什么 command”，不会自己计算关节角。关节动作仍来自 stand、locomotion 或 Init policy。</div>
+      </div>
+    </section>
+
+    <section class="section-card">
+      <div class="section-head">
+        <h2>建议阅读顺序</h2>
+        <p>第一次看工程时，按照“接口 → 单任务 → 部署 → 上层切换”阅读，比逐文件随机浏览更容易建立完整心智模型。</p>
+      </div>
+      <div class="reading-grid">
+        <div class="reading-item"><em>STEP 1</em><b>先理解公共接口</b><span>bpx_base_env_cfg.py：关节顺序、观测、动作和控制频率。</span></div>
+        <div class="reading-item"><em>STEP 2</em><b>再比较三个任务</b><span>观察 command、reset、reward、termination 有何不同。</span></div>
+        <div class="reading-item"><em>STEP 3</em><b>沿 sim2sim 闭环阅读</b><span>run_mujoco → runner → robot / policy。</span></div>
+        <div class="reading-item"><em>STEP 4</em><b>最后理解行为切换</b><span>supervisor → behaviors → transition，并结合 CSV 验证。</span></div>
+      </div>
+    </section>
+
+    <footer>离线单文件 · 不依赖 CDN · 源码链接均相对于工程根目录</footer>
+  </div>
+
+  <script>
+    const details = {
+      root: {
+        category: "PROJECT",
+        title: "BPX_test 工程",
+        text: "同一个工程同时包含 Isaac Lab 训练侧、策略导出物、MuJoCo sim2sim 运行侧和 Supervisor 上层行为规划。核心原则是三个底层策略共享同一观测/动作契约。",
+        input: "BPX 机器人资产、各任务训练目标、速度指令与机器人状态",
+        output: "locomotion / stand / Init 策略，以及 MuJoCo 闭环控制和诊断数据",
+        files: [["README.md", "README.md"], ["sim2sim/BPX_SIM2SIM_WORKFLOW.md", "sim2sim/BPX_SIM2SIM_WORKFLOW.md"]]
+      },
+      training: {
+        category: "ISAAC LAB",
+        title: "Isaac Lab 训练层",
+        text: "ManagerBasedRLEnv 将机器人、观测、动作、指令、事件、奖励和终止条件组合成可并行训练的强化学习环境。公共部分通过继承复用，任务目标保持彼此独立。",
+        input: "USD 机器人、任务配置、PPO 配置",
+        output: "checkpoint model_x.pt、训练参数快照和 TensorBoard 指标",
+        files: [["任务目录", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/"]]
+      },
+      baseEnv: {
+        category: "SHARED CONTRACT",
+        title: "公共环境配置",
+        text: "所有策略的共同源定义。这里固定 BPX 模型、默认姿态、12 关节顺序、48 维观测、12 维动作、场景、公共域随机化以及 200/50 Hz 时序。任务奖励不应放回这里。",
+        input: "BPX USD 与 Isaac Lab MDP 基础组件",
+        output: "BpxBaseEnvCfg，供三个任务配置继承",
+        files: [["bpx_base_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"]]
+      },
+      locomotionEnv: {
+        category: "TASK · LOCOMOTION",
+        title: "Locomotion 行走任务",
+        text: "训练策略跟踪 vx、vy、wz 随机速度指令。奖励包含线速度/偏航跟踪、足端腾空时间、姿态稳定、平滑动作和非法接触惩罚。",
+        input: "随机速度 command、直立附近重置、周期推力",
+        output: "可根据速度指令行走的 locomotion policy",
+        files: [["bpx_locomotion_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_locomotion_env_cfg.py"], ["PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/bpx_locomotion_ppo_cfg.py"]]
+      },
+      standEnv: {
+        category: "TASK · STAND",
+        title: "Stand 静止站立任务",
+        text: "command 永远为零，策略专门学习主动平衡而不小踏步。奖励重点抑制机身六维运动、足端滑动、关节速度和动作变化，同时保持目标高度与水平姿态。",
+        input: "零速度 command、默认站姿附近随机扰动",
+        output: "零指令下更安静、抗小推力的 stand policy",
+        files: [["bpx_stand_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_stand_env_cfg.py"], ["PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/bpx_stand_ppo_cfg.py"]]
+      },
+      initEnv: {
+        category: "TASK · INIT",
+        title: "Init 趴卧起身任务",
+        text: "机器人从腹部朝地、机身贴地、四腿收折的状态开始，通过实际高度进度、关节站姿、四足支撑、成功站立和末端稳定奖励学习起身。4 秒 episode 用于继续训练稳定交接。",
+        input: "趴卧根状态、收折关节姿态、零 command",
+        output: "达到可切换 stand 策略状态的四足稳定 Init policy",
+        files: [["bpx_init_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_init_env_cfg.py"], ["Init 奖励函数", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/rewards.py"], ["PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/bpx_init_ppo_cfg.py"]]
+      },
+      gymAgents: {
+        category: "REGISTRY + PPO",
+        title: "Gym 注册与 PPO 配置",
+        text: "注册 BPX-Locomotion-v0、BPX-Stand-v0 和 BPX-Init-v0；BPX-Test-v0 保留为旧行走任务兼容入口。三个新任务分别写入独立日志目录。",
+        input: "环境配置类与 RSL-RL runner 配置类",
+        output: "可被 train.py / play.py 按 task ID 加载的 Gym spec",
+        files: [["任务注册", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/__init__.py"], ["公共 PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/rsl_rl_ppo_cfg.py"], ["旧环境兼容层", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_test_env_cfg.py"]]
+      },
+      assets: {
+        category: "ROBOT ASSETS",
+        title: "机器人资产层",
+        text: "URDF 是结构源描述，USD 服务 Isaac Lab/PhysX，MJCF 服务 MuJoCo。两侧必须保持关节名称、轴向、限位、默认姿态和动力学参数一致。",
+        input: "机器人几何、惯量、关节与执行器定义",
+        output: "Isaac Lab USD 和 MuJoCo MJCF",
+        files: [["资产说明", "source/BPX_test/BPX_test/BPX_structure/README.md"]]
+      },
+      urdf: {
+        category: "ASSET · SOURCE",
+        title: "URDF 与网格",
+        text: "定义 BPX 连杆树、关节轴、质量惯量、碰撞体和可视网格，是转换 USD/MJCF 时需要核对的物理来源。",
+        input: "CAD/结构参数与 OBJ/MTL 网格",
+        output: "bpx.urdf，供资产转换和人工核对",
+        files: [["bpx.urdf", "source/BPX_test/BPX_test/BPX_structure/bpx/urdf/bpx.urdf"], ["mesh 目录", "source/BPX_test/BPX_test/BPX_structure/bpx/meshes/"]]
+      },
+      usd: {
+        category: "ASSET · ISAAC",
+        title: "USD 资产",
+        text: "Isaac Lab 通过 USD 生成 articulation，并在 PhysX 中应用接触、摩擦、隐式 PD 执行器和并行环境复制。",
+        input: "URDF 转换结果与 USD 转换参数",
+        output: "训练环境中的 Robot articulation",
+        files: [["USD 转换配置", "source/BPX_test/BPX_test/BPX_structure/usd/config.yaml"], ["USD 目录", "source/BPX_test/BPX_test/BPX_structure/usd/"]]
+      },
+      mjcf: {
+        category: "ASSET · MUJOCO",
+        title: "MJCF 模型",
+        text: "MuJoCo 侧机器人、地面、joint、actuator 和 sensor 描述。sim2sim 运行器按名称查找关节，不依赖 XML 内部数组碰巧同序。",
+        input: "与训练侧一致的机器人几何和动力学参数",
+        output: "MjModel / MjData，用于闭环仿真",
+        files: [["bpx.xml", "source/BPX_test/BPX_test/BPX_structure/mjcf/bpx.xml"]]
+      },
+      trainFlow: {
+        category: "TRAIN → EXPORT",
+        title: "训练与导出流程",
+        text: "train.py 生成完整 checkpoint；play.py 加载 checkpoint 中的 actor 并导出独立推理模型。policy.pt 不是 model_x.pt 的简单改名。",
+        input: "Gym task ID、环境配置、PPO 配置",
+        output: "model_x.pt、exported/policy.pt、exported/policy.onnx",
+        files: [["train.py", "scripts/rsl_rl/train.py"], ["play.py", "scripts/rsl_rl/play.py"]]
+      },
+      trainScript: {
+        category: "RSL-RL",
+        title: "train.py",
+        text: "创建大量并行环境，包装成 RSL-RL VecEnv，运行 PPO 学习并周期保存 checkpoint。每个任务的 experiment_name 决定日志根目录。",
+        input: "--task、--num_envs、--max_iterations 等参数",
+        output: "训练日志、参数快照和可恢复 checkpoint",
+        files: [["train.py", "scripts/rsl_rl/train.py"], ["CLI 参数", "scripts/rsl_rl/cli_args.py"]]
+      },
+      playScript: {
+        category: "EXPORT",
+        title: "play.py",
+        text: "加载训练 checkpoint，提取 actor 网络进行回放，并导出 TorchScript policy.pt 与 ONNX policy.onnx。critic、优化器和迭代状态不会进入导出模型。",
+        input: "model_x.pt 与对应 task 配置",
+        output: "可供 MuJoCo 运行的确定性推理模型",
+        files: [["play.py", "scripts/rsl_rl/play.py"]]
+      },
+      logs: {
+        category: "ARTIFACTS",
+        title: "logs/rsl_rl",
+        text: "按策略分为 bpx_locomotion、bpx_stand、bpx_init；旧任务仍使用 bpx_flat。每个时间戳目录保存模型、环境参数、agent 参数和 exported 文件。",
+        input: "训练过程、checkpoint 保存和 play 导出",
+        output: "可追溯、可比较、可恢复的实验记录",
+        files: [["logs/rsl_rl", "logs/rsl_rl/"]]
+      },
+      simCore: {
+        category: "MUJOCO",
+        title: "MuJoCo sim2sim 核心",
+        text: "把 Isaac Lab 导出的策略放进 MuJoCo 闭环执行。它负责配置校验、状态与关节映射、观测构造、策略推理、PD 力矩和仿真时序。",
+        input: "MJCF、导出策略、command、TOML 接口参数",
+        output: "MuJoCo 机器人运动、终端状态和 CSV 日志",
+        files: [["run_mujoco.py", "sim2sim/run_mujoco.py"], ["sim2sim README", "sim2sim/README.md"]]
+      },
+      simConfig: {
+        category: "SIM2SIM · CONFIG",
+        title: "集中配置与校验",
+        text: "TOML 保存模型路径、关节顺序、默认角、动作缩放、PD 增益、时序、command 和 Supervisor 阈值；config.py 负责解析、路径解析和参数合法性检查。",
+        input: "bpx_flat.toml",
+        output: "不可变的 Sim2SimConfig 对象",
+        files: [["bpx_flat.toml", "sim2sim/config/bpx_flat.toml"], ["config.py", "sim2sim/bpx_sim2sim/config.py"]]
+      },
+      robotAdapter: {
+        category: "SIM2SIM · ROBOT",
+        title: "机器人适配器",
+        text: "按名称建立 MuJoCo joint/actuator 映射，读取机身与关节状态，转换机身坐标系速度和投影重力，拼接策略观测，并计算受限 PD 力矩。",
+        input: "MjModel、MjData、共同关节/控制配置",
+        output: "48 维观测、12 维目标角和 12 维力矩",
+        files: [["robot.py", "sim2sim/bpx_sim2sim/robot.py"]]
+      },
+      policyLoader: {
+        category: "SIM2SIM · POLICY",
+        title: "策略加载层",
+        text: "为 ONNX、TorchScript 和 zero backend 提供统一 Policy 接口，并检查模型输入输出维度、有限值和 dtype。BehaviorPolicies 依赖这个统一接口进行路由。",
+        input: "48 维 float32 观测",
+        output: "12 维 float32 action",
+        files: [["policy.py", "sim2sim/bpx_sim2sim/policy.py"]]
+      },
+      runner: {
+        category: "SIM2SIM · LOOP",
+        title: "闭环运行器",
+        text: "200 Hz 推进 MuJoCo 与更新 PD 力矩；50 Hz 读取 command、更新 Supervisor、选择策略、构造观测和推理。还负责策略 action 混合、跌倒终止、viewer 与 CSV。",
+        input: "Config、Policy、可选 Supervisor/Gamepad",
+        output: "仿真结果和策略频率诊断日志",
+        files: [["runner.py", "sim2sim/bpx_sim2sim/runner.py"], ["run_mujoco.py", "sim2sim/run_mujoco.py"]]
+      },
+      behavior: {
+        category: "HIGH-LEVEL CONTROL",
+        title: "输入与行为规划",
+        text: "上层把用户速度意图和机器人安全状态转换成离散行为，再路由到对应专家策略。该层不直接产生关节角或力矩。",
+        input: "raw command、机身高度/倾角/实际速度、策略可用性",
+        output: "行为模式、过滤后 command 和当前底层 Policy",
+        files: [["supervisor.py", "sim2sim/bpx_sim2sim/supervisor.py"], ["behaviors.py", "sim2sim/bpx_sim2sim/behaviors.py"]]
+      },
+      gamepad: {
+        category: "INPUT",
+        title: "Linux 游戏手柄输入",
+        text: "读取 /dev/input/eventN，使用轴标定、死区、符号和最大速度把摇杆转换成 vx、vy、wz。可选 LB deadman 确保松手立即输出精确零指令。",
+        input: "Linux input-event 轴与按键事件",
+        output: "每个策略周期更新的 raw [vx, vy, wz]",
+        files: [["gamepad.py", "sim2sim/bpx_sim2sim/gamepad.py"], ["CLI 接线", "sim2sim/run_mujoco.py"]]
+      },
+      supervisor: {
+        category: "STATE MACHINE",
+        title: "BehaviorSupervisor",
+        text: "使用归一化 command 活跃度、进入/退出迟滞、连续成立时间、最短驻留时间以及高度/倾角阈值决定 INIT、STAND、WALK、STOPPING 或 DISABLED。",
+        input: "raw command + SupervisorState + dt",
+        output: "SupervisorDecision(mode, filtered command, reason)",
+        files: [["supervisor.py", "sim2sim/bpx_sim2sim/supervisor.py"], ["阈值配置", "sim2sim/config/bpx_flat.toml"]]
+      },
+      behaviors: {
+        category: "POLICY ROUTING",
+        title: "BehaviorPolicies",
+        text: "把行为模式映射到专家策略。STAND 无专用模型时回退 locomotion+零 command；INIT 无模型时由 Supervisor 进入 DISABLED，避免调用不存在的控制器。",
+        input: "BehaviorMode 与已加载策略集合",
+        output: "当前应执行的 Policy 对象及可读名称",
+        files: [["behaviors.py", "sim2sim/bpx_sim2sim/behaviors.py"]]
+      },
+      transition: {
+        category: "SMOOTH TRANSITION",
+        title: "指令与动作平滑",
+        text: "SlewRateLimiter 限制 command 每秒变化量；ActionBlender 在策略对象真正改变时，用 smoothstep 从上一帧实际 action 平滑过渡到新策略输出。",
+        input: "目标 command、旧 action、新策略 action、dt",
+        output: "连续变化的 command 和 action",
+        files: [["transition.py", "sim2sim/bpx_sim2sim/transition.py"]]
+      },
+      contract: {
+        category: "INTERFACE CONTRACT",
+        title: "跨仿真接口契约",
+        text: "策略切换安全性和 sim2sim 正确性都依赖这份契约。任何观测顺序、关节顺序、动作语义或时序变化，都意味着旧 checkpoint 可能不再兼容。",
+        input: "训练时 env.yaml 与公共环境源码",
+        output: "训练、导出、MuJoCo 三端一致的张量含义",
+        files: [["公共环境", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["sim2sim TOML", "sim2sim/config/bpx_flat.toml"]]
+      },
+      observation: {
+        category: "CONTRACT · OBS",
+        title: "48 维观测",
+        text: "按顺序拼接：base_lin_vel 3、base_ang_vel 3、projected_gravity 3、velocity_command 3、joint_pos_rel 12、joint_vel 12、last_action 12。",
+        input: "机器人当前状态、过滤后 command、上一策略动作",
+        output: "shape=(48,) 的策略输入",
+        files: [["训练侧观测", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["部署侧构造", "sim2sim/bpx_sim2sim/robot.py"]]
+      },
+      action: {
+        category: "CONTRACT · ACTION",
+        title: "12 维关节位置动作",
+        text: "策略输出是相对默认姿态的归一化偏移：q_target = q_default + 0.5 × action。随后 PD 控制器将目标角转换为力矩，而不是把 action 当作直接力矩。",
+        input: "Policy 输出 action",
+        output: "12 个关节目标角与受限控制力矩",
+        files: [["训练侧动作", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["部署侧 PD", "sim2sim/bpx_sim2sim/robot.py"]]
+      },
+      jointOrder: {
+        category: "CONTRACT · MAPPING",
+        title: "唯一关节顺序",
+        text: "BPX_POLICY_JOINT_NAMES 是策略张量的语义索引。动作、关节位置、关节速度、MuJoCo joint 和 actuator 都必须按名称解析为相同顺序。",
+        input: "显式 12 关节名称列表",
+        output: "不会错腿、错轴的观测与动作映射",
+        files: [["顺序源定义", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["映射指南", "sim2sim/JOINT_ORDER_MAPPING_GUIDE.md"]]
+      },
+      timing: {
+        category: "CONTRACT · TIMING",
+        title: "时序与控制参数",
+        text: "训练和 MuJoCo 均使用 dt=0.005 s 的 200 Hz 物理步；decimation=4 得到 50 Hz 策略周期。执行器共同使用 Kp=40、Kd=1、最大力矩 30 Nm。",
+        input: "环境与 TOML 控制参数",
+        output: "与训练分布一致的闭环响应",
+        files: [["训练时序", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["部署时序", "sim2sim/config/bpx_flat.toml"]]
+      },
+      validation: {
+        category: "VALIDATION",
+        title: "验证与知识沉淀",
+        text: "分层检查资产、接口、导出格式、单步输出和闭环轨迹，帮助判断问题来自模型、关节映射、坐标系、控制参数还是状态机切换。",
+        input: "训练配置、导出策略、Isaac/MuJoCo 运行数据",
+        output: "可重复的断言、误差指标和排查记录",
+        files: [["工作流", "sim2sim/BPX_SIM2SIM_WORKFLOW.md"]]
+      },
+      setupCheck: {
+        category: "VALIDATION · STATIC",
+        title: "基础设置检查",
+        text: "加载 MJCF，确认 12 个关节和 actuator 能按名称找到，检查默认姿态、观测维度、PD 参数和零动作计算中没有 NaN/Inf。",
+        input: "bpx.xml 与 bpx_flat.toml",
+        output: "模型和接口是否具备运行前提",
+        files: [["validate_setup.py", "sim2sim/validate_setup.py"]]
+      },
+      policyCheck: {
+        category: "VALIDATION · EXPORT",
+        title: "策略导出一致性",
+        text: "对相同随机观测比较 TorchScript 与 ONNX 输出，避免导出、opset、dtype 或输入 shape 变化导致部署模型与原 actor 不一致。",
+        input: "policy.pt、policy.onnx 和随机 48 维样本",
+        output: "最大/平均动作差异",
+        files: [["validate_policy_export.py", "sim2sim/validate_policy_export.py"]]
+      },
+      trajectoryCheck: {
+        category: "VALIDATION · DYNAMIC",
+        title: "跨仿真轨迹对拍",
+        text: "probe_isaaclab 生成确定性 Isaac 基准；MuJoCo CSV 记录相同时序的状态、动作和力矩；compare_trajectories 按时间对齐并计算 RMSE。",
+        input: "Isaac JSON 与 MuJoCo CSV",
+        output: "关节、基座、动作等跨仿真误差",
+        files: [["probe_isaaclab.py", "sim2sim/probe_isaaclab.py"], ["compare_trajectories.py", "sim2sim/compare_trajectories.py"]]
+      },
+      testsDocs: {
+        category: "TESTS + DOCS",
+        title: "回归测试与说明文档",
+        text: "tests 覆盖观测/映射、动态 command、策略路由、action 混合、状态机迟滞和游戏手柄标定；Markdown 保存完整工作流与关节顺序排错经验。",
+        input: "核心模块的确定性行为",
+        output: "防回归测试和可维护的工程知识",
+        files: [["测试目录", "sim2sim/tests/"], ["工作流", "sim2sim/BPX_SIM2SIM_WORKFLOW.md"], ["关节指南", "sim2sim/JOINT_ORDER_MAPPING_GUIDE.md"]]
+      }
+    };
+
+    const map = document.getElementById("mindmap");
+    const svg = document.getElementById("connectors");
+    const nodes = [...map.querySelectorAll(".node")];
+    const branches = [...map.querySelectorAll(".branch")];
+
+    function isVisible(element) {
+      return element.offsetParent !== null;
+    }
+
+    function drawConnectors() {
+      const mapRect = map.getBoundingClientRect();
+      svg.setAttribute("viewBox", `0 0 ${map.clientWidth} ${map.clientHeight}`);
+      svg.innerHTML = "";
+
+      nodes.forEach((node) => {
+        const parentId = node.dataset.parent;
+        if (!parentId || !isVisible(node)) return;
+        const parent = document.getElementById(parentId);
+        if (!parent || !isVisible(parent)) return;
+
+        const a = parent.getBoundingClientRect();
+        const b = node.getBoundingClientRect();
+        const parentCenter = { x: a.left - mapRect.left + a.width / 2, y: a.top - mapRect.top + a.height / 2 };
+        const nodeCenter = { x: b.left - mapRect.left + b.width / 2, y: b.top - mapRect.top + b.height / 2 };
+        const goesRight = nodeCenter.x >= parentCenter.x;
+        const startX = parentCenter.x + (goesRight ? a.width / 2 : -a.width / 2);
+        const endX = nodeCenter.x + (goesRight ? -b.width / 2 : b.width / 2);
+        const middleX = (startX + endX) / 2;
+        const color = getComputedStyle(node.closest(".branch") || node).getPropertyValue("--branch").trim() || "#4dd8e6";
+
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", `M ${startX} ${parentCenter.y} C ${middleX} ${parentCenter.y}, ${middleX} ${nodeCenter.y}, ${endX} ${nodeCenter.y}`);
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", color);
+        path.setAttribute("stroke-opacity", parentId === "root" ? "0.62" : "0.36");
+        path.setAttribute("stroke-width", parentId === "root" ? "2.2" : "1.45");
+        path.setAttribute("stroke-linecap", "round");
+        svg.appendChild(path);
+      });
+    }
+
+    function showDetail(key) {
+      const item = details[key] || details.root;
+      document.getElementById("detailCategory").textContent = item.category;
+      document.getElementById("detailTitle").textContent = item.title;
+      document.getElementById("detailText").textContent = item.text;
+      document.getElementById("detailInput").textContent = item.input;
+      document.getElementById("detailOutput").textContent = item.output;
+      const list = document.getElementById("detailFiles");
+      list.innerHTML = "";
+      item.files.forEach(([label, href]) => {
+        const link = document.createElement("a");
+        link.className = "file-link";
+        link.href = href;
+        link.textContent = label;
+        list.appendChild(link);
+      });
+    }
+
+    nodes.forEach((node) => {
+      node.addEventListener("click", () => {
+        nodes.forEach((other) => other.classList.remove("selected"));
+        node.classList.add("selected");
+        showDetail(node.dataset.key);
+        if (node.classList.contains("branch-node")) {
+          const branch = node.closest(".branch");
+          branch.classList.toggle("collapsed");
+          node.setAttribute("aria-expanded", String(!branch.classList.contains("collapsed")));
+          requestAnimationFrame(drawConnectors);
+        }
+      });
+    });
+
+    document.getElementById("expandAll").addEventListener("click", () => {
+      branches.forEach((branch) => branch.classList.remove("collapsed"));
+      map.querySelectorAll(".branch-node").forEach((node) => node.setAttribute("aria-expanded", "true"));
+      requestAnimationFrame(drawConnectors);
+    });
+
+    document.getElementById("collapseAll").addEventListener("click", () => {
+      branches.forEach((branch) => branch.classList.add("collapsed"));
+      map.querySelectorAll(".branch-node").forEach((node) => node.setAttribute("aria-expanded", "false"));
+      requestAnimationFrame(drawConnectors);
+    });
+
+    document.getElementById("resetView").addEventListener("click", () => {
+      document.getElementById("search").value = "";
+      nodes.forEach((node) => node.classList.remove("match", "selected"));
+      document.getElementById("root").classList.add("selected");
+      branches.forEach((branch) => branch.classList.remove("collapsed"));
+      map.querySelectorAll(".branch-node").forEach((node) => node.setAttribute("aria-expanded", "true"));
+      document.getElementById("mapShell").scrollTo({ left: 0, top: 0, behavior: "smooth" });
+      showDetail("root");
+      requestAnimationFrame(drawConnectors);
+    });
+
+    document.getElementById("search").addEventListener("input", (event) => {
+      const query = event.target.value.trim().toLowerCase();
+      nodes.forEach((node) => node.classList.remove("match"));
+      if (!query) return;
+      const matches = nodes.filter((node) => node.textContent.toLowerCase().includes(query) || (node.dataset.key || "").toLowerCase().includes(query));
+      matches.forEach((node) => {
+        node.classList.add("match");
+        const branch = node.closest(".branch");
+        if (branch) branch.classList.remove("collapsed");
+      });
+      if (matches[0]) {
+        matches[0].scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+        showDetail(matches[0].dataset.key);
+      }
+      requestAnimationFrame(drawConnectors);
+    });
+
+    const resizeObserver = new ResizeObserver(() => requestAnimationFrame(drawConnectors));
+    resizeObserver.observe(map);
+    window.addEventListener("load", () => {
+      showDetail("root");
+      requestAnimationFrame(drawConnectors);
+      setTimeout(drawConnectors, 120);
+    });
+  </script>
+</body>
+</html>

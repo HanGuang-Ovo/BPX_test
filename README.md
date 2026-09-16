@@ -1,16 +1,19 @@
-# Template for Isaac Lab Projects
+# BPX 四足机器人多策略训练与 sim2sim 工程
 
 ## Overview
 
-This project/repository serves as a template for building projects or extensions based on Isaac Lab.
-It allows you to develop in an isolated environment, outside of the core Isaac Lab repository.
+本工程基于 Isaac Lab 2.2.1，提供 BPX 四足机器人的行走、静止站立和趴卧起身三个独立训练任务，
+并通过 MuJoCo sim2sim 运行器和 supervisor 在运行时切换底层策略。
 
-**Key Features:**
+当前 Gym 任务：
 
-- `Isolation` Work outside the core Isaac Lab repository, ensuring that your development efforts remain self-contained.
-- `Flexibility` This template is set up to allow your code to be run as an extension in Omniverse.
+- `BPX-Locomotion-v0`：平地速度跟踪；
+- `BPX-Stand-v0`：零速度指令静止站立；
+- `BPX-Init-v0`：从腹部朝地的趴卧状态恢复为四足稳定站姿；
+- `BPX-Test-v0`：旧行走任务的兼容别名。
 
-**Keywords:** extension, template, isaaclab
+详细的训练—导出—MuJoCo 工作流见
+[sim2sim/BPX_SIM2SIM_WORKFLOW.md](sim2sim/BPX_SIM2SIM_WORKFLOW.md)。
 
 ## Installation
 
@@ -24,13 +27,13 @@ It allows you to develop in an isolated environment, outside of the core Isaac L
     ```bash
     # use 'PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
     python -m pip install -e source/BPX_test
+    ```
 
 - Verify that the extension is correctly installed by:
 
     - Listing the available tasks:
 
-        Note: It the task name changes, it may be necessary to update the search pattern `"Template-"`
-        (in the `scripts/list_envs.py` file) so that it can be listed.
+        `scripts/list_envs.py` 会列出所有以 `BPX-` 开头的任务。
 
         ```bash
         # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda

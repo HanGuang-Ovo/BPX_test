@@ -193,8 +193,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
     dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
 
-    # run training
-    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+    # Init 的观测信号由 episode 时间生成，必须从 phase=0 开始；否则随机起始步会让
+    # 策略在还未收到“开始起身”的阶段信号时直接进入中途参考轨迹。
+    init_at_random_ep_len = not (
+        args_cli.task is not None and args_cli.task.lower().endswith("-init-v0")
+    )
+    runner.learn(
+        num_learning_iterations=agent_cfg.max_iterations,
+        init_at_random_ep_len=init_at_random_ep_len,
+    )
 
     # close the simulator
     env.close()
