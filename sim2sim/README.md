@@ -260,6 +260,8 @@ python sim2sim/compare_trajectories.py \
 4. 力矩饱和；
 5. 接触、摩擦、惯量等动力学差异。
 
+使用 `--viewer` 时，窗口左上角会显示运行时诊断信息，包括 `base_link height`、base position、倾角、机体坐标系速度、足端接触数、当前行为模式/策略、command，以及 action/torque 最大值。这里的 `base_link height` 与运行器内部的 `base_height()` 一致，表示配置中 `robot.base_body_name`（当前为 `torso`）的 body 原点世界坐标 Z 值，不是机身最低点到地面的距离。
+
 当前 MJCF 文件内部声明的步长为 `0.002 s`，运行器会显式覆盖为训练使用的 `0.005 s`。默认采用逐物理步显式 PD，因为它在当前模型上的A/B测试优于 MuJoCo内置位置伺服。把配置中的 `control.mode` 改为 `implicit`、`simulation.integrator` 改为 `implicitfast`，可以继续比较两种积分语义。
 
 ## 当前验证状态

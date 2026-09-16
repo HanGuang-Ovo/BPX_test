@@ -325,6 +325,15 @@ class Sim2SimRunner:
                 mujoco.mj_step(self.model, self.data)
 
                 if active_viewer is not None:
+                    _update_viewer_overlay(
+                        active_viewer,
+                        self.robot,
+                        command_array,
+                        action,
+                        torque,
+                        behavior_mode,
+                        behavior_policy,
+                    )
                     active_viewer.sync()
                     if not active_viewer.is_running():
                         termination_reason = "viewer_closed"
@@ -417,3 +426,83 @@ def _viewer_context(model: mujoco.MjModel, data: mujoco.MjData, enabled: bool):
     if not enabled:
         return _NullViewerContext()
     return _SafePassiveViewerContext(model, data)
+
+
+def _viewer_overlay_text(
+    robot: BpxMujocoRobot,
+    command: npt.NDArray[np.floating],
+    action: npt.NDArray[np.floating],
+    torque: npt.NDArray[np.floating],
+    behavior_mode: str,
+    behavior_policy: str,
+) -> tuple[str, str]:
+    """构造 MuJoCo viewer 左上角状态栏的两列文本。"""
+
+    state = robot.state()
+    base_position = robot.data.xpos[robot.base_body_id]
+    left = "\n".join(
+        (
+            "BPX MuJoCo",
+            "time",
+            "base position (x/y/z)",
+            "base_link height",
+            "tilt",
+            "base velocity (body)",
+            "feet contact",
+            "mode",
+            "policy",
+            "command (vx/vy/wz)",
+            "|action|max",
+            "|torque|max",
+        )
+    )
+    right = "\n".join(
+        (
+            "",
+            f"{robot.data.time:7.2f} s",
+            f"{base_position[0]:+.3f} / {base_position[1]:+.3f} / {base_position[2]:+.3f} m",
+            f"{robot.base_height():.3f} m",
+            f"{robot.tilt_angle():.3f} rad",
+            (
+                f"{state.base_linear_velocity[0]:+.2f} / "
+                f"{state.base_linear_velocity[1]:+.2f} / "
+                f"{state.base_linear_velocity[2]:+.2f} m/s"
+            ),
+            f"{robot.feet_in_contact()} / 4",
+            behavior_mode,
+            behavior_policy,
+            f"{command[0]:+.2f} / {command[1]:+.2f} / {command[2]:+.2f}",
+            f"{np.max(np.abs(action)):.3f}",
+            f"{np.max(np.abs(torque)):.3f} Nm",
+        )
+    )
+    return left, right
+
+
+def _update_viewer_overlay(
+    viewer: object,
+    robot: BpxMujocoRobot,
+    command: npt.NDArray[np.floating],
+    action: npt.NDArray[np.floating],
+    torque: npt.NDArray[np.floating],
+    behavior_mode: str,
+    behavior_policy: str,
+) -> None:
+    """更新 viewer 状态栏；旧版 MuJoCo 没有 set_texts 时静默跳过。
+
+    ``set_texts`` 的第一个参数最终传给 ``mjr_overlay``，实际类型是
+    ``mjtFont``，不是用于 OpenGL context 的 ``mjtFontScale``。
+    """
+
+    set_texts = getattr(viewer, "set_texts", None)
+    if set_texts is None:
+        return
+    left, right = _viewer_overlay_text(robot, command, action, torque, behavior_mode, behavior_policy)
+    set_texts(
+        (
+            mujoco.mjtFont.mjFONT_BIG,
+            mujoco.mjtGridPos.mjGRID_TOPLEFT,
+            left,
+            right,
+        )
+    )
