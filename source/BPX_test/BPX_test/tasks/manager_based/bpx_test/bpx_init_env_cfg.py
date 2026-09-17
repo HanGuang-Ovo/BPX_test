@@ -11,6 +11,7 @@
 """
 
 from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
@@ -22,6 +23,14 @@ from .bpx_base_env_cfg import BpxBaseEnvCfg, BpxCommonEventCfg, BpxObservationsC
 
 MINIMUM_FRONT_FEET_WIDTH = 0.24
 INIT_START_HEIGHT = 0.13
+INIT_MAXIMUM_UPWARD_VELOCITY = 0.20
+INIT_MAXIMUM_JOINT_TORQUE = 28.0
+INIT_TORQUE_PENALTY_INITIAL_WEIGHT = -0.1
+INIT_TORQUE_PENALTY_FINAL_WEIGHT = -1.0
+INIT_TORQUE_CURRICULUM_START_SUCCESS_RATE = 0.70
+INIT_TORQUE_CURRICULUM_FULL_SUCCESS_RATE = 0.90
+INIT_TORQUE_CURRICULUM_MINIMUM_EPISODES = 4_096
+INIT_TORQUE_CURRICULUM_WINDOW_SIZE = 8_192
 
 
 @configclass
@@ -113,6 +122,10 @@ class BpxInitEventCfg(BpxCommonEventCfg):
 class BpxInitRewardsCfg:
     """用状态反馈塑造抬升、四足支撑、正常站姿和稳定交接。"""
 
+
+    """
+    奖励项
+    """
     # 机身抬升奖励
     # 机身高度从趴卧的 0.13 m 提升到 0.40 m，奖励逐渐增加。
     height_progress = RewTerm(
@@ -133,7 +146,7 @@ class BpxInitRewardsCfg:
         params={
             "start_height": INIT_START_HEIGHT,
             "target_height": 0.40,
-            "std": 0.70,
+            "std": 0.50,
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
         },
     )
@@ -218,6 +231,9 @@ class BpxInitRewardsCfg:
         },
     )
 
+    """
+    惩罚项
+    """
     # 趴姿初期允许足端寻找支点；高度超过 0.18 m 后逐步抑制贴地横向滑动。
     feet_slide = RewTerm(
         func=mdp.feet_slide_progress,
@@ -249,16 +265,49 @@ class BpxInitRewardsCfg:
         },
     )
 
-    # “先学会站起”阶段只保留轻量正则；跳过复位后的动作突变，避免平滑惩罚压制探索。
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
-    joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-0.001)
+    # 只惩罚超过上限的世界系向上速度，限制快速弹起而不强迫策略跟踪固定速度。
+    base_upward_velocity_limit_l2 = RewTerm(
+        func=mdp.base_upward_velocity_limit_l2,
+        weight=-2.0,
+        params={"maximum_velocity": INIT_MAXIMUM_UPWARD_VELOCITY},
+    )
+
+    # “先学会站起”阶段保留轻量正则；动作变化率仍跳过复位后的首次突变，避免平滑惩罚压制探索。
+    flat_orientation_l2 = RewTerm(
+        func=mdp.flat_orientation_l2,
+        weight=-1.0
+    )
+    # 直接抑制关节高速运动，降低起身过程中腿部动作的激进程度。
+    joint_vel_l2 = RewTerm(
+        func=mdp.joint_vel_l2,
+        weight=-0.001
+    )
+    # 抑制关节速度突变，使起身动作更平滑；该量级与 locomotion 任务保持一致。
+    dof_acc_l2 = RewTerm(
+        func=mdp.joint_acc_l2,
+        weight=-4.0e-7
+    )
+    # 抑制动作突变，使起身动作更平滑；该量级与 locomotion 任务保持一致。
     action_rate_l2 = RewTerm(
         func=mdp.action_rate_l2_after_time,
         weight=-0.005,
         params={"start_time_s": 0.10},
     )
-    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1.0e-5)
-    joint_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-1.0)
+    # 直接抑制关节力矩，降低起身过程中腿部动作的激进程度。
+    dof_torques_l2 = RewTerm(
+        func=mdp.joint_torques_l2,
+        weight=-2.0e-5
+    )
+    # 超过 28 N·m 后按超限量平方施加大惩罚，给 30 N·m 仿真硬上限预留保护裕量。
+    joint_torque_limit_l2 = RewTerm(
+        func=mdp.joint_torque_limit_l2,
+        weight=INIT_TORQUE_PENALTY_INITIAL_WEIGHT,
+        params={"maximum_torque": INIT_MAXIMUM_JOINT_TORQUE},
+    )
+    joint_pos_limits = RewTerm(
+        func=mdp.joint_pos_limits,
+        weight=-1.0
+    )
 
 
 @configclass
@@ -267,8 +316,32 @@ class BpxInitTerminationsCfg:
 
     # 当前 contact_forces 是各刚体的净接触力，不能可靠区分腿间自碰撞和允许的腿部触地。
     # 前腿并拢先由足端宽度直接约束；以后若增加过滤接触传感器，再单独加入自碰撞项。
-    time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    joint_pos_out_of_limit = DoneTerm(func=mdp.joint_pos_out_of_limit)
+    time_out = DoneTerm(
+        func=mdp.time_out,
+        time_out=True
+    )
+    joint_pos_out_of_limit = DoneTerm(
+        func=mdp.joint_pos_out_of_limit
+    )
+
+
+@configclass
+class BpxInitCurriculumCfg:
+    """先学习可靠起身，再逐步加强关节力矩超限约束。"""
+
+    joint_torque_limit = CurrTerm(
+        func=mdp.modify_reward_weight_by_success_rate,
+        params={
+            "term_name": "joint_torque_limit_l2",
+            "success_term_name": "recovered",
+            "initial_weight": INIT_TORQUE_PENALTY_INITIAL_WEIGHT,
+            "final_weight": INIT_TORQUE_PENALTY_FINAL_WEIGHT,
+            "start_success_rate": INIT_TORQUE_CURRICULUM_START_SUCCESS_RATE,
+            "full_success_rate": INIT_TORQUE_CURRICULUM_FULL_SUCCESS_RATE,
+            "minimum_episodes": INIT_TORQUE_CURRICULUM_MINIMUM_EPISODES,
+            "window_size": INIT_TORQUE_CURRICULUM_WINDOW_SIZE,
+        },
+    )
 
 
 @configclass
@@ -280,6 +353,7 @@ class BpxInitEnvCfg(BpxBaseEnvCfg):
     rewards: BpxInitRewardsCfg = BpxInitRewardsCfg()
     terminations: BpxInitTerminationsCfg = BpxInitTerminationsCfg()
     events: BpxInitEventCfg = BpxInitEventCfg()
+    curriculum: BpxInitCurriculumCfg = BpxInitCurriculumCfg()
 
     def __post_init__(self) -> None:
         super().__post_init__()

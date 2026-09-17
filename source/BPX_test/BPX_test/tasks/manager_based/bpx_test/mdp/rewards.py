@@ -141,6 +141,58 @@ def base_height_exp(
     return torch.exp(-torch.square(height_error) / std**2)
 
 
+def base_upward_velocity_limit_l2(
+    env: ManagerBasedRLEnv,
+    maximum_velocity: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """惩罚超过上限的机身世界系向上速度。
+
+    只惩罚正向超限量，不要求机身跟踪固定速度。因此低于上限的缓慢起身不受影响，
+    静止或向下运动也不会因为偏离某个正速度目标而额外受罚。
+
+    参数:
+        env: RL 环境实例。
+        maximum_velocity: 允许的最大世界系向上速度, 单位 m/s。
+        asset_cfg: 场景实体配置, 默认为 "robot"。
+
+    返回:
+        形状 ``(num_envs,)`` 的张量, 为向上速度超限量的平方。
+    """
+    if not math.isfinite(maximum_velocity) or maximum_velocity < 0.0:
+        raise ValueError("maximum_velocity 必须是非负有限值")
+    asset: Articulation = env.scene[asset_cfg.name]
+    upward_velocity = asset.data.root_lin_vel_w[:, 2]
+    velocity_excess = torch.clamp(upward_velocity - maximum_velocity, min=0.0)
+    return torch.square(velocity_excess)
+
+
+def joint_torque_limit_l2(
+    env: ManagerBasedRLEnv,
+    maximum_torque: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """惩罚绝对值超过上限的关节施加力矩。
+
+    阈值以内不产生惩罚；超过阈值后按超限量的平方快速增大。该项是训练期软约束，
+    不能替代执行器或真实电机驱动器中的硬限流、限矩保护。
+
+    参数:
+        env: RL 环境实例。
+        maximum_torque: 允许的最大关节力矩绝对值, 单位 N·m。
+        asset_cfg: 场景实体配置, 指定参与评估的关节。
+
+    返回:
+        形状 ``(num_envs,)`` 的张量, 为所有关节力矩超限量的平方和。
+    """
+    if not math.isfinite(maximum_torque) or maximum_torque <= 0.0:
+        raise ValueError("maximum_torque 必须是正有限值")
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_torque = torch.abs(asset.data.applied_torque[:, asset_cfg.joint_ids])
+    torque_excess = torch.clamp(joint_torque - maximum_torque, min=0.0)
+    return torch.sum(torch.square(torque_excess), dim=1)
+
+
 def upright_height_progress(
     env: ManagerBasedRLEnv,
     start_height: float,
