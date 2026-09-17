@@ -2,7 +2,7 @@
 
 本文档说明本工程的 sim2sim 是如何建立的、每一层为什么需要对齐、当前代码如何运行，以及出现异常时怎样定位问题。这里的 sim2sim 指：**在 Isaac Lab / PhysX 中训练策略，把同一个策略放入 MuJoCo，使用 MuJoCo 的机器人状态重新构造训练时的观测，并形成完整闭环控制。**
 
-它不是简单地把 ONNX 文件“放进 MuJoCo 播放”，也不是复制一段 Isaac Sim 中记录好的动作。
+本文运行说明按 2026-09-17 源码同步。所有命令在项目根目录执行；安装与资产准备见 [项目 README](../README.md)。第 13～14 节保留早期实验记录，不代表当前模型已重新验证。默认 MuJoCo 从趴姿开始，需通过手柄 RB 触发 Init；单策略行走和零动作对拍必须另外准备站姿配置。
 
 ## 1. 最终闭环是什么
 
@@ -38,7 +38,7 @@ MuJoCo 前进一步，再从新状态重新构造观测
 
 这是一个反馈闭环：机器人每走一步都会改变下一次观测，策略再根据新观测产生新动作。
 其中速度指令既可以由 `--vx/--vy/--wz` 固定给出，也可以由 Linux 游戏手柄实时生成；
-两种来源最终都写入同一观测切片 `observation[9:12]`，不会绕过策略直接控制关节。
+两种来源共用观测切片 `observation[9:12]`。启用 Supervisor 时，写入的是过滤后的指令；WAITING_INIT、INIT、STAND 中该切片为零。等待起身使用固定趴姿保持动作，不经过神经网络推理。
 
 ## 2. 工程中的文件分工
 
@@ -57,8 +57,8 @@ MuJoCo 前进一步，再从新状态重新构造观测
 | [`bpx_sim2sim/policy.py`](bpx_sim2sim/policy.py) | ONNX、TorchScript 和零动作三种策略后端 |
 | [`bpx_sim2sim/runner.py`](bpx_sim2sim/runner.py) | 以正确频率运行策略和物理仿真，显示 viewer 并记录 CSV |
 | [`bpx_sim2sim/gamepad.py`](bpx_sim2sim/gamepad.py) | 发现 Linux 游戏手柄、读取 input-event、标定摇杆并生成速度指令 |
-| [`bpx_sim2sim/supervisor.py`](bpx_sim2sim/supervisor.py) | INIT、STAND、WALK、STOPPING、DISABLED 行为状态机 |
-| [`bpx_sim2sim/behaviors.py`](bpx_sim2sim/behaviors.py) | 将行为状态映射到 locomotion、stand 或 Init 策略 |
+| [`bpx_sim2sim/supervisor.py`](bpx_sim2sim/supervisor.py) | WAITING_INIT、INIT、STAND、WALK、STOPPING、DISABLED 六状态机 |
+| [`bpx_sim2sim/behaviors.py`](bpx_sim2sim/behaviors.py) | 将行为映射到趴姿保持动作、locomotion、stand 或 Init 策略 |
 | [`bpx_sim2sim/transition.py`](bpx_sim2sim/transition.py) | command 变化率限制和策略 action 平滑混合 |
 | [`run_mujoco.py`](run_mujoco.py) | 用户运行 MuJoCo 策略的命令行入口 |
 | [`validate_setup.py`](validate_setup.py) | 检查 MJCF、关节映射、观测维度和零动作 PD |
@@ -96,22 +96,20 @@ python scripts/rsl_rl/train.py --task BPX-Init-v0 --headless
 `policy.pt` 和 `policy.onnx`：
 
 ```bash
-python scripts/rsl_rl/play.py --task BPX-Locomotion-v0 --checkpoint model_1499.pt
-python scripts/rsl_rl/play.py --task BPX-Stand-v0 --checkpoint model_1499.pt
-python scripts/rsl_rl/play.py --task BPX-Init-v0 --checkpoint /path/to/model_2999.pt
+python scripts/rsl_rl/play.py --task BPX-Locomotion-v0 --num_envs 1 --checkpoint "logs/rsl_rl/bpx_locomotion/<运行目录>/model_1499.pt"
+python scripts/rsl_rl/play.py --task BPX-Stand-v0 --num_envs 1 --checkpoint "logs/rsl_rl/bpx_stand/<运行目录>/model_1499.pt"
+python scripts/rsl_rl/play.py --task BPX-Init-v0 --num_envs 1 --checkpoint "logs/rsl_rl/bpx_init/<运行目录>/model_2999.pt"
 ```
+
+请将上述占位路径替换为实际文件。`play.py --checkpoint` 直接接收路径，不会把裸文件名拼接到 `--load_run` 目录。
 
 随后把三种 ONNX 分别写入 `config/bpx_flat.toml` 的 `locomotion_policy`、
 `stand_policy`、`init_policy`。启用 Supervisor 后会自动加载，不再需要每次在
 命令行重复输入路径；命令行参数仍可用于临时覆盖。
 
-当前 Init 已配置为：
+当前模型路径以 TOML 的 `[paths]` 为准，不在本文重复固定某次实验时间戳。`logs/` 被 Git 忽略，克隆后需自行准备模型；配置不会自动跟随新训练结果。
 
-```text
-logs/rsl_rl/bpx_init/2026-09-14_23-03-13/exported/policy.onnx
-```
-
-手柄运行时，MuJoCo 先以 `0.11 m` 高度和训练使用的趴卧关节角复位，并进入
+手柄运行时，MuJoCo 先以 `0.133 m` 高度和训练使用的趴卧关节角复位，并进入
 `WAITING_INIT`。RB 的按下沿触发 Init；达到高度、倾角、速度和四足接触条件并持续
 `0.5 s` 后自动切换 Stand。此后摇杆 command 按原有迟滞规则进入 Walk。等待和起身期间
 command 始终为零；使用 `--gamepad-deadman` 时，LB 仍仅控制行走 command。
@@ -126,14 +124,12 @@ python sim2sim/run_mujoco.py \
 Init 不再跟踪固定时长的高度与竖直速度轨迹，而是用实际抬升进度、关节接近默认站姿程度
 和足端接触比例提供连续奖励。前足机体系横向宽度必须至少达到 `0.24 m`，否则不能获得
 `recovered` 与 `recovered_stability`；抬升后还会逐步启用髋横滚站姿奖励和足端滑动
-惩罚。稳定项只在完成起身后抑制机身运动。动作变化率、关节速度和力矩惩罚保持较轻，
-避免在尚未学会起身时压制探索。
-MuJoCo Supervisor 使用相同的四足接触要求，并连续确认后才从 Init 切换到 stand。
+惩罚。稳定项只在完成起身后抑制机身运动。当前还有力矩惩罚课程：最近最多 8192 个回合、至少收集 4096 个，以终帧 `recovered` 成功率在 70%～90% 间把超出 28 N·m 的惩罚权重由 -0.1 调整到 -1.0；成功率下降时惩罚可减弱。
+训练 `recovered` 要求倾角 ≤0.1 rad 及前足宽度 ≥0.24 m；MuJoCo Supervisor 使用倾角 <0.25 rad、速度阈值、四足接触与 0.50 秒连续确认，当前不检查前足宽度。两套完成条件需分别评估。
 
-旧的时序奖励 checkpoint 不能用于验证新的状态驱动起身逻辑；上面记录的当前导出模型
-来自状态驱动版训练。
+旧模型必须核对其训练时的 command 语义；曾把起身时序编码到 command 槽位的模型不能直接当作零 command 的状态驱动 Init 使用。
 
-因此首先读取训练运行保存的配置：
+因此首先读取目标检查点实际保存的配置。下面仅示意早期行走实验的目录结构：
 
 ```text
 logs/rsl_rl/bpx_flat/2026-09-08_11-28-30/
@@ -166,7 +162,7 @@ Actor 隐藏层：128 → 128 → 128
 empirical_normalization：False
 ```
 
-由于没有经验归一化器，MuJoCo 端直接按训练语义构造 `float32` 观测，不需要额外加载均值和方差。若以后开启 observation normalization，必须把归一化器参数一同导出并在推理前应用。
+由于没有经验归一化器，MuJoCo 端直接按训练语义构造 `float32` 观测，不需要额外加载均值和方差。若以后启用 observation normalization，需确认导出模型包含同一归一化器；当前 play.py 已将 obs_normalizer 传给导出函数，不应再在部署端重复归一化。
 
 ### 3.2 当前模型文件的关系
 
@@ -174,7 +170,7 @@ empirical_normalization：False
 - `policy.pt` 是便于 PyTorch 运行的 TorchScript Actor；
 - `policy.onnx` 是便于跨运行时部署的 ONNX Actor。
 
-已经检查过当前导出策略与 `model_1499.pt` 中 Actor 参数一致，并且 TorchScript 与 ONNX 对相同输入的最大动作误差约为 `2e-7`。因此当前问题定位重点不在模型导出，而在仿真接口和动力学。
+早期记录曾报告一组导出与其 `model_1499.pt` Actor 一致、TorchScript / ONNX 最大动作误差约 `2e-7`。该结果不能推广到当前模型；每次更换检查点都应比较同一检查点的两份导出。默认 TOML 的 ONNX 与 TorchScript 路径可能来自不同实验。
 
 ## 4. 第二步：建立唯一的接口契约
 
@@ -192,7 +188,8 @@ empirical_normalization：False
 | 观测维度 | `48` |
 | 动作维度 | `12` |
 | 动作缩放 | `0.5 rad` |
-| 默认基座高度 | `0.4 m` |
+| 公共站姿根高度 | `0.40 m` |
+| MuJoCo 默认趴姿复位高度 | `0.133 m` |
 | PD 刚度 `Kp` | `40` |
 | PD 阻尼 `Kd` | `1` |
 | 力矩限制 | `±30 Nm` |
@@ -204,7 +201,7 @@ empirical_normalization：False
 动作维度 = 关节数 = 12
 ```
 
-路径也会相对于仓库根目录转换成绝对路径，从而避免因为当前终端目录不同而加载错误模型。
+路径相对于仓库根目录解析。`joint_position` 决定物理复位姿态，`default_joint_position` 决定动作零点和相对关节观测；默认趴姿不能覆盖策略的站姿零点。
 
 ## 5. 第三步：准备和检查 MuJoCo 机器人模型
 
@@ -264,7 +261,7 @@ joint dof/qvel address
 
 这是“关节类型优先”顺序。最初的 MuJoCo 配置错误地采用了“一条腿的 roll、pitch、knee 排在一起”的顺序。两者都是 12 维，程序不会报维度错误，却会把动作和观测传给错误关节，导致机器人启动后立即乱动和倾倒。
 
-现在训练配置已经使用显式 `BPX_POLICY_JOINT_NAMES`，动作、关节位置观测和关节速度观测都设置 `preserve_order=True`。当前已导出的旧模型虽然是在正则匹配配置下训练，但训练时实际解析顺序正好与上表一致。
+现在训练配置已经使用显式 `BPX_POLICY_JOINT_NAMES`，动作、关节位置观测和关节速度观测都设置 `preserve_order=True`。早期已核对模型的实际解析顺序与上表一致；其他模型仍需核对各自的训练配置和启动日志。
 
 ## 6. 第四步：在 MuJoCo 中重建 48 维观测
 
@@ -348,8 +345,7 @@ g_body = R_world_to_body × [0, 0, -1]
 动态指令：command_source() → [vx, vy, wz]
 ```
 
-动态来源会在每个 50 Hz 策略周期开始时采样，经过形状和有限值检查后写入观测，
-同时写入 CSV 的 `command_vx`、`command_vy`、`command_wz` 列。手柄控制使用的就是这条
+动态来源在每个 50 Hz 策略周期开始时采样并检查形状和有限值。单策略模式直接写入观测；Supervisor 模式先过滤或清零。CSV 的 `raw_command_*` 保存原始输入，`command_vx`、`command_vy`、`command_wz` 保存实际进入观测的指令。手柄控制使用的就是这条
 动态指令接口，所以手柄改变的是策略的目标速度，而不是直接向 MuJoCo 执行器写力矩。
 
 ### 6.5 关节状态和上一动作
@@ -360,7 +356,7 @@ g_body = R_world_to_body × [0, 0, -1]
 joint_pos_relative = q - q_default
 ```
 
-`last_action` 只有上一帧动作，不是多帧动作历史。首次运行时上一动作初始化为全零；每次策略推理后，新动作会成为下一次观测的 `last_action`。
+`last_action` 只有上一帧动作。单策略模式初始为零；Supervisor 模式初始为 `(joint_position - default_joint_position) / action_scale`，用于保持复位姿态。之后记录混合后实际施加的动作，而非尚未混合的神经网络原始输出。
 
 ### 6.6 为什么部署时不加训练噪声
 
@@ -440,14 +436,14 @@ MuJoCo 默认使用显式 PD：
 
 ### 8.1 为什么选择显式 PD
 
-Isaac Lab 使用 PhysX 隐式执行器语义。MuJoCo 可以配置内置位置伺服，但两种引擎的隐式积分和执行器实现并不完全相同。当前工程对两种方式做过比较，逐物理步显式重算 PD 在现有模型上效果更好，因此默认：
+Isaac Lab 使用 PhysX 隐式执行器语义。MuJoCo 可以配置内置位置伺服，但两种引擎的隐式积分和执行器实现并不完全相同。早期实验曾比较两种方式并选择逐物理步显式 PD；当前配置默认：
 
 ```toml
 control.mode = "explicit"
 simulation.integrator = "euler"
 ```
 
-这并不意味着显式 PD 在所有机器人上都更好，只是当前 BPX 的已验证选择。
+这不意味着显式 PD 在所有模型或检查点上都更好，更换策略和动力学参数后仍需复验。
 
 ## 9. 第七步：对齐控制频率
 
@@ -491,7 +487,7 @@ MuJoCo 运行器采用同样的双频率结构：
 
 ### 10.2 倾倒是否终止
 
-默认情况下倾倒不会结束 sim2sim，仿真会持续到指定时长，方便观察完整故障过程。需要提前结束时添加：
+未启用 Supervisor 的单策略模式默认不会因跌倒提前结束。需要开启物理步级跌倒终止时添加：
 
 ```bash
 --terminate-on-fall
@@ -505,16 +501,17 @@ bad_orientation   倾角超过阈值
 torso_contact     躯干接触地面
 ```
 
+Supervisor 进入 `DISABLED` 时会独立结束仿真，不受 `--terminate-on-fall` 控制。WAITING_INIT 与 INIT 阶段免于物理跌倒终止检查，但 Init 仍有自身倾角中止条件。
+
 ### 10.3 viewer 段错误的处理
 
 之前机器人倾倒退出后出现过“段错误（核心已转储）”。这发生在 MuJoCo 被动 viewer 的后台渲染线程仍在清理 OpenGL 资源时 Python 解释器已经退出，并不等于策略或动力学计算发生段错误。
 
-当前 `_SafePassiveViewerContext` 会先关闭 viewer，再等待其后台线程结束，从而解决 MuJoCo 3.13 下的退出竞争。
+当前 `_SafePassiveViewerContext` 会先关闭 viewer，再等待其后台线程结束，用于缓解已知的退出竞争；更换 MuJoCo、GLFW 或图形驱动后需重新检查。
 
 ### 10.4 游戏手柄实时指令
 
-手柄输入参考 `/home/hanguang/DRV/usb_hid_receiver.py`，使用 Linux 内核标准
-`/dev/input/event*` 接口。读取是非阻塞的，不会让 200 Hz 物理循环等待输入，也不依赖
+手柄输入使用 Linux 内核标准 `/dev/input/event*` 接口，不依赖仓库外的个人脚本。读取是非阻塞的，不会让 200 Hz 物理循环等待输入，也不依赖
 `hidapi` 或 `python-evdev`。启动时会通过 `EVIOCGABS` 查询每根轴的当前值、最小值、
 最大值和硬件死区，因此同时支持常见的有符号范围（如 `-32768..32767`）和无符号范围
 （如 `0..255`）。软件死区外的数值会重新缩放到完整的 `[-1, 1]`。
@@ -545,15 +542,10 @@ python sim2sim/run_mujoco.py \
 ```
 
 `--gamepad-deadman` 表示只有按住 LB（Linux 按钮码 `310`）时才接受非零指令；松开后
-下一策略周期立即发送零速度指令。有多个设备时先通过 `--list-gamepads` 查看序号，再添加
+下一策略周期原始速度指令归零，实际停止仍经过状态机和平滑控制。有多个设备时先通过 `--list-gamepads` 查看序号，再添加
 `--gamepad-index 0`；也可以用 `--gamepad-device /dev/input/eventN` 显式指定节点。
 
-如果手柄不是标准轴布局，可先观察原始事件：
-
-```bash
-python /home/hanguang/DRV/usb_hid_receiver.py \
-    --backend input --device /dev/input/eventN
-```
+如果手柄不是标准轴布局，先根据设备的轴/按键事件确认映射。
 
 然后通过以下参数调整：
 
@@ -575,9 +567,9 @@ python /home/hanguang/DRV/usb_hid_receiver.py \
 ```text
 原始 command
     ↓
-BehaviorSupervisor：迟滞、驻留时间、跌倒判断
+BehaviorSupervisor：RB 请求、机器人反馈、迟滞与驻留时间
     ↓
-INIT / STAND / WALK / STOPPING / DISABLED
+WAITING_INIT / INIT / STAND / WALK / STOPPING / DISABLED
     ↓
 BehaviorPolicies：选择对应底层策略
     ↓
@@ -589,13 +581,18 @@ PD 与 MuJoCo
 默认转换为：
 
 ```text
-STAND   -- command > 0.12，持续 0.15 s --> WALK
-WALK    -- command < 0.05，持续 0.30 s --> STOPPING
-STOPPING -- 速度稳定，持续 0.20 s ------> STAND
-STOPPING -- 1.50 s 仍未稳定 ------------> STAND（超时保护）
-任意正常状态 -- 高度 < 0.20 m 或倾角 > 0.70 rad --> INIT / DISABLED
-INIT -- 高度和姿态恢复，持续 0.50 s --------------> STAND
+支持的趴姿 + Init 模型 -- 等待 --> WAITING_INIT -- RB --> INIT
+INIT -- 高度/倾角/速度/四足接触连续达标 0.50 s --> STAND
+INIT -- 倾角 >= 0.55 rad --> DISABLED
+STAND -- command 活跃度 >0.12，持续 0.15 s --> WALK
+WALK -- 最短驻留 0.30 s 后，活跃度 <0.05 持续 0.30 s --> STOPPING
+STOPPING -- 速度及过滤指令稳定 0.20 s，或停止等待 1.50 s --> STAND
+STOPPING -- 活跃度 >0.12，持续 0.15 s --> WALK
+正常状态未站立 -- 支持的趴姿且有 Init --> WAITING_INIT（重新等待 RB）
+不支持的起身姿态 / 未站立且无 Init / 非有限状态 --> DISABLED
 ```
+
+未站立判定为高度 <0.20 m 或倾角 >0.70 rad；支持的趴姿需高度低且倾角 <0.35 rad。Init 完成要求高度 >0.36 m、倾角 <0.25 rad、平面速度 <0.05 m/s、角速度模长 <0.10 rad/s 及四足接触。WAITING_INIT、INIT、STAND 的 command 为零；STOPPING 继续使用行走策略平滑减速。
 
 command 阈值先分别除以训练满量程 `[1.0, 0.5, 1.0]`，再取三个分量绝对值的最大值，
 所以阈值对 `vx`、`vy`、`wz` 使用一致的归一化语义。进入和退出阈值不同，可以避免
@@ -617,8 +614,7 @@ python sim2sim/run_mujoco.py \
     --log sim2sim/logs/supervisor.csv
 ```
 
-不加 `--supervisor` 且不传 `--stand-policy`/`--init-policy` 时，不会加载可选专家，
-仍运行原来的单 locomotion 策略。两个命令行路径参数保留为 TOML 的临时覆盖入口。
+除了显式 `--supervisor`，指定 `--stand-policy`/`--init-policy` 也会启用状态机；使用手柄且 TOML 配置了 Init 路径时同样会自动启用。只有这些条件均不成立时才是单主策略模式。两个专家路径参数临时覆盖 TOML，并按 ONNX 加载；主策略格式由 `--backend` 决定。仅启用 Supervisor 不会自动产生 RB 起身请求。
 
 状态机参数集中在 `config/bpx_flat.toml` 的 `[supervisor]`。CSV 新增
 `behavior_mode`、`behavior_policy`、`transition_alpha`、`raw_command_*`；原来的
@@ -631,13 +627,12 @@ python sim2sim/run_mujoco.py \
 ### 11.1 检查独立环境
 
 ```bash
-cd /home/hanguang/BPX_test
 conda activate bpx-sim2sim
 which python
 python -c "import mujoco, onnxruntime; print(mujoco.__version__, onnxruntime.__version__)"
 ```
 
-当前独立环境使用 Python 3.11、MuJoCo 3.13 和 ONNX Runtime 1.30。
+sim2sim 要求 Python 3.11+；依赖文件只声明最低版本，实际安装版本以命令输出为准。
 
 ### 11.2 检查 MJCF、映射和零动作 PD
 
@@ -645,49 +640,52 @@ python -c "import mujoco, onnxruntime; print(mujoco.__version__, onnxruntime.__v
 python sim2sim/validate_setup.py
 ```
 
-这一步验证模型能加载、12 个关节和执行器都能按名称找到、观测是 48 维、初始关节角正确且零动作不会出现 NaN/Inf。
+这一步检查模型加载和名称映射，打印观测/动作形状及关节顺序，并检查零动作 PD 是否出现 NaN/Inf；它不验证任务成功率。
 
 注意：脚本通过只代表 MuJoCo 内部自洽；打印出的 `joint order` 还必须与 Isaac Lab 的 `Resolved joint names` 逐项比较。
 
 ### 11.3 检查两种导出格式
 
-如果当前环境同时安装了 PyTorch：
+先把 TOML 中 ONNX 与 TorchScript 路径指向同一检查点的导出，并确认环境同时安装了 PyTorch 与 ONNX Runtime：
 
 ```bash
 python sim2sim/validate_policy_export.py --samples 100
 ```
 
-如果 TorchScript 与 ONNX 对相同输入不一致，应先处理导出或运行时问题，不进入动力学对齐。
+默认报告最大绝对误差，容差为 `1e-5`。若不一致，先排除模型路径来自不同检查点，再检查导出和运行时。
 
-### 11.4 运行零策略
+### 11.4 准备站姿配置并运行零策略
+
+默认趴姿不能直接作为行走任务的对拍初态。先复制配置：
 
 ```bash
-python sim2sim/run_mujoco.py \
-    --backend zero \
-    --duration 2 \
-    --no-realtime \
+cp sim2sim/config/bpx_flat.toml sim2sim/config/bpx_standing.toml
+```
+
+在副本 `[initial_state]` 中，将 `base_position` 改为 `[0, 0, 0.40]`，`joint_position` 改为与 `default_joint_position` 相同的站姿角；保留单位四元数。不要改动策略零点 `default_joint_position`。完整字段示例见 [运行器说明](README.md#4-无手柄站姿单策略测试)。
+
+```bash
+python sim2sim/run_mujoco.py --config sim2sim/config/bpx_standing.toml \
+    --backend zero --vx 0 --vy 0 --wz 0 --duration 2.02 --no-realtime \
     --log sim2sim/logs/mujoco_zero_action.csv
 ```
 
-它回答的是：“不依赖神经网络，MJCF 的初始姿态和 PD 控制是否合理？”
+默认配置也能运行零动作，但会从趴姿向站姿目标运动；这不是固定趴姿保持，也不等于训练的 Init 策略。
 
-### 11.5 查看实际策略
+### 11.5 查看单行走策略
 
-无窗口快速运行：
+确保副本模型路径有效，再无窗口运行：
 
 ```bash
-python sim2sim/run_mujoco.py \
-    --backend onnx \
-    --vx 0.2 --vy 0 --wz 0 \
-    --duration 20 \
-    --no-realtime \
+python sim2sim/run_mujoco.py --config sim2sim/config/bpx_standing.toml \
+    --backend onnx --vx 0.2 --vy 0 --wz 0 --duration 20 --no-realtime \
     --log sim2sim/logs/forward_02.csv
 ```
 
 打开画面：
 
 ```bash
-python sim2sim/run_mujoco.py --backend onnx --viewer --vx 0.2
+python sim2sim/run_mujoco.py --config sim2sim/config/bpx_standing.toml --backend onnx --viewer --vx 0.2
 ```
 
 ### 11.6 从 Isaac Lab 生成确定性基准
@@ -712,11 +710,13 @@ python sim2sim/probe_isaaclab.py \
 
 必须保留 reset 事件。之前曾直接删除全部 reset 事件，导致关节没有被写回默认姿态，使轨迹比较从错误初始状态开始。
 
-当前机器存在 Warp/CUDA 驱动接口警告，所以探测脚本使用 CPU，并避免额外访问容易创建 PhysX tensor view 的懒加载属性。
+早期环境曾出现 Warp/CUDA 驱动接口警告，上述 CPU 命令用于隔离相关问题。脚本的关节名称、默认角取自 TOML，观测项元数据在脚本内声明；这些字段不是对 Isaac 运行时关节顺序的独立探测，仍需核对训练启动日志。
+
+如需策略对拍，显式传入 `--policy /实际路径/policy.pt`；脚本默认指向早期固定实验，不跟随 TOML 的策略路径。非零指令长轨迹还应检查 command 重采样和站立掩码是否改变实际输入。
 
 ### 11.7 对拍 Isaac 与 MuJoCo
 
-生成 2 秒 MuJoCo 零动作日志后运行：
+按 §11.4 生成 2.02 秒的站姿 MuJoCo 零动作日志后运行：
 
 ```bash
 python sim2sim/compare_trajectories.py \
@@ -733,7 +733,7 @@ python sim2sim/compare_trajectories.py \
 - 关节速度；
 - 动作。
 
-MuJoCo CSV 的首行是 `t=0`，Isaac 轨迹首行是第一个策略步之后的 `t=0.02 s`，因此不能简单按文件行号直接相减。
+MuJoCo CSV 的首行是 `t=0`，Isaac 轨迹首行是第一个策略步之后的 `t=0.02 s`，因此不能简单按文件行号直接相减。运行到 2.02 秒可覆盖 Isaac 100 步的 `t=2.00 s` 末帧。当前比较器使用最近时间样本，不插值，也不拒绝覆盖不足，比较前应确认时长和初始状态一致。
 
 ### 11.8 one-hot 关节测试
 
@@ -774,7 +774,7 @@ action[i] = 0.2
 
 先检查离散接口，再调整连续动力学。否则可能通过修改摩擦或 Kp 暂时掩盖一个关节映射错误。
 
-## 13. 本次实际定位和修复过程
+## 13. 历史关节映射排错记录
 
 最初的现象是：
 
@@ -798,7 +798,9 @@ MuJoCo 中启动后迅速倾倒、动作混乱
 
 这个案例说明：神经网络输入输出维度正确、模型也能成功推理，仍然可能因为每一维的“语义标签”不同而完全失效。
 
-## 14. 当前验证结果
+## 14. 历史验证结果
+
+以下数值和测试叙述来自旧文档中的早期行走实验，本次文档核对未重新运行物理仿真或复算这些数据。它们不代表当前 TOML 的三份模型、Init 课程或完整六状态流程已通过验证。重现实验需保存相应检查点、参数、日志及依赖版本。
 
 ### 14.1 前进策略
 
@@ -817,11 +819,11 @@ duration = 20 s
 累计前进约 3.72 m
 ```
 
-这说明当前策略在 MuJoCo 中不只是保持站立，而是确实响应了前进速度指令。
+该记录说明当时模型响应了前进指令，不能替代当前策略的完整速度矩阵评估。
 
 ### 14.2 确定性零动作对拍
 
-当前保存的 100 个对齐样本结果为：
+旧文档记录的 100 个对齐样本结果为：
 
 | 状态组 | 总体 RMSE | 最大单帧 RMSE |
 | --- | ---: | ---: |
@@ -845,22 +847,17 @@ duration = 20 s
 - 动态 command 在每个策略周期进入 48 维观测的 `[9:12]`；
 - 原有固定 command、零策略和 ONNX 策略运行不受影响。
 
-当前自动测试共 25 项并全部通过，ONNX 策略也完成了短时闭环回归。验证环境中当时没有
-映射可用的 `/dev/input` 手柄节点，因此 USB 手柄的最终硬件轴确认需要在连接设备后执行；
-这不会影响已完成的事件解码、归一化和策略接口测试。
+旧记录报告当时通过自动测试与短时 ONNX 回归，但未完成 USB 手柄硬件轴确认。当前本机 tests/ 被 Git 忽略，不能把旧测试数量或通过结论当作可随仓库复现的现状；应以实际运行结果为准。
 
 ### 14.4 上层状态机验证
 
-状态机测试覆盖完整的 `STAND → WALK → STOPPING → STAND` 循环、进入/退出迟滞、
-command 变化率限制、action 连续混合、无 Init 策略时安全停用，以及存在 Init 策略时进入
-INIT。真实 ONNX 在 Supervisor 模式下完成 2 秒回归：先以 STAND 和零 command
-启动，满足进入条件后切换到 WALK，并稳定接收 `vx=0.2 m/s`。
+旧状态机回归覆盖过 `STAND → WALK → STOPPING → STAND` 与短时 ONNX 运行。当前新增的 WAITING_INIT、RB 请求、四足确认和 Init 倾角中止应另行验证；默认趴姿不再按旧流程直接从 STAND 行走。
 
 ## 15. 当前仍未完全对齐的部分
 
 ### 15.1 碰撞几何
 
-目前发现 URDF 与 MJCF 的部分碰撞盒存在尺寸或数量差异，例如：
+早期排查记录过 URDF 与 MJCF 的碰撞盒差异，以下数值保留作排查线索；更换资产后需重新核对：
 
 - 大腿 box 在 URDF 中完整尺寸为 `0.045 × 0.13 × 0.029 m`，MJCF 对应完整尺寸约为 `0.045 × 0.16 × 0.029 m`；
 - 小腿部分 box 的长度和局部位置不同；
@@ -873,12 +870,12 @@ INIT。真实 ONNX 在 Supervisor 模式下完成 2 秒回归：先以 STAND 和
 Isaac 训练中机器人材质会随机化：
 
 ```text
-静摩擦：0.6～1.2
+静摩擦：0.5～1.4
 动摩擦：0.4～1.0
 恢复系数：0
 ```
 
-MuJoCo 当前没有复现每个 episode 的这组随机化，地面和机器人实际采用 MJCF / MuJoCo 中的接触参数。因此当前只验证名义条件，不能据此认为完整域随机范围已经对齐。
+Isaac 的这些材质随机化发生在 startup，并非每个 episode。MuJoCo 当前没有复现这组随机化，地面和机器人实际采用 MJCF / MuJoCo 中的接触参数。因此名义参数下的测试不能证明完整域随机范围已经对齐。
 
 ### 15.3 执行器语义
 
@@ -928,48 +925,24 @@ sim2sim 可以直接从 MuJoCo 读取真实状态。真正 sim2real 时，基座
 
 ## 17. 最简运行步骤
 
-如果只想重新运行当前已验证的策略：
+默认趴姿多策略流程：先准备模型路径和推理依赖，再连接 Linux 手柄。
 
 ```bash
-cd /home/hanguang/BPX_test
-conda activate bpx-sim2sim
-
 python sim2sim/validate_setup.py
-
-python sim2sim/run_mujoco.py \
-    --backend onnx \
-    --viewer \
-    --vx 0.2 --vy 0 --wz 0
+python sim2sim/run_mujoco.py --list-gamepads
+python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --gamepad-deadman \
+    --supervisor --duration 120 --log sim2sim/logs/supervisor.csv
 ```
 
-如果出现问题，先无窗口保存日志：
+按一下 RB 起身，确认进入 Stand 后按住 LB 推摇杆。左摇杆控制 vx/vy，右摇杆控制 wz；可添加 `--gamepad-max-vx 0.4 --gamepad-max-vy 0.2 --gamepad-max-wz 0.5` 缩小指令范围。
+
+无手柄单策略调试应先完成 §11.4 的站姿配置：
 
 ```bash
-python sim2sim/run_mujoco.py \
-    --backend onnx \
-    --vx 0.2 --vy 0 --wz 0 \
-    --duration 10 \
-    --no-realtime \
+python sim2sim/run_mujoco.py --config sim2sim/config/bpx_standing.toml \
+    --backend onnx --vx 0.2 --vy 0 --wz 0 --duration 10 --no-realtime \
     --log sim2sim/logs/debug.csv
 ```
-
-如果使用手柄实时控制：
-
-```bash
-python sim2sim/run_mujoco.py --list-gamepads
-
-python sim2sim/run_mujoco.py \
-    --backend onnx \
-    --viewer \
-    --gamepad \
-    --gamepad-deadman \
-    --supervisor \
-    --duration 120
-```
-
-运行时终端会每秒显示当前 `command=[vx, vy, wz]`，可以先小幅推动摇杆确认方向，再逐步
-增大幅度。为了降低首次测试风险，也可以添加
-`--gamepad-max-vx 0.4 --gamepad-max-vy 0.2 --gamepad-max-wz 0.5`。
 
 ## 18. 理解 sim2sim 的核心结论
 
@@ -979,7 +952,7 @@ python sim2sim/run_mujoco.py \
 2. **接口一致性**：观测、动作、关节顺序、坐标系、单位和频率完全相同；
 3. **动力学一致性**：质量、惯量、碰撞、摩擦、执行器和求解器足够接近。
 
-本次最严重的问题属于第二层：关节顺序错误。它修复后机器人立即从“启动倾倒”变为“稳定前进”。目前剩余问题主要属于第三层，即 PhysX 与 MuJoCo 的精细动力学差异。
+历史排错案例中的主要问题属于第二层：关节顺序错误。当前多策略系统还需验证起身成功、状态切换和完整指令范围，不能把后续工作全部归为精细动力学差异。
 
 所以判断 sim2sim 是否成功，不应只问“ONNX 是否加载”，而应问：
 

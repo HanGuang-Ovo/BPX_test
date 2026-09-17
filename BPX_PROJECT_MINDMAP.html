@@ -371,6 +371,18 @@
     .arrow { color: var(--muted); font-size: 12px; }
     .note { padding: 16px; border-left: 3px solid var(--orange); border-radius: 10px; background: rgba(255,180,92,.07); color: var(--muted); font-size: 13px; }
     .note strong { color: var(--orange); }
+    .state-routes { display: grid; gap: 10px; }
+    .state-route { display: grid; gap: 8px; }
+    .state-route h3 { margin: 0; color: var(--muted); font-size: 12px; }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 12px; border-bottom: 1px solid var(--line); text-align: left; }
+    th { color: var(--cyan); white-space: nowrap; }
+    td { color: var(--muted); }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    pre { overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); font-size: 12px; }
+    .section-card > p { color: var(--muted); font-size: 13px; }
+    .search-status { color: var(--muted); font-size: 12px; }
 
     .reading-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
     .reading-item { padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); }
@@ -411,14 +423,15 @@
   <div class="page">
     <header class="hero">
       <div>
-        <p class="eyebrow">BPX quadruped · architecture map</p>
+        <p class="eyebrow">BPX 四足机器人 · 工程架构</p>
         <h1>BPX 工程思维导图</h1>
         <p>从 Isaac Lab 多策略训练，到模型导出，再到 MuJoCo 中由手柄、Supervisor 和底层策略组成的闭环控制。点击节点可以查看职责、数据关系和对应源码。</p>
       </div>
-      <aside class="status-card" aria-label="当前策略状态">
-        <strong>当前状态</strong>
-        <span>Locomotion：已有训练与导出模型</span>
-        <span>Stand：已有模型 · Init：趴卧起身任务待训练</span>
+      <aside class="status-card" aria-label="当前代码与配置状态">
+        <strong>已同步当前代码 · <time datetime="2026-09-17">2026-09-17</time></strong>
+        <span>3 个训练任务 + 1 个兼容入口</span>
+        <span>TOML 已配置行走、站立和起身模型路径</span>
+        <span>模型文件需另行准备；默认趴姿等待 RB 起身</span>
       </aside>
     </header>
 
@@ -427,11 +440,12 @@
       <div class="stat"><b>48</b><span>共同策略观测维度</span></div>
       <div class="stat"><b>12</b><span>共同关节动作维度</span></div>
       <div class="stat"><b>200 / 50 Hz</b><span>物理 / 策略频率</span></div>
-      <div class="stat"><b>5</b><span>Supervisor 行为状态</span></div>
+      <div class="stat"><b>6</b><span>Supervisor 行为状态（含起身等待）</span></div>
     </section>
 
     <nav class="toolbar" aria-label="思维导图工具栏">
       <input id="search" class="search" type="search" placeholder="搜索：奖励、手柄、ONNX、关节映射……" aria-label="搜索节点">
+      <span class="search-status" id="searchStatus" role="status" aria-live="polite"></span>
       <button class="tool-button" id="expandAll" type="button">展开全部</button>
       <button class="tool-button" id="collapseAll" type="button">收起末级</button>
       <button class="tool-button" id="resetView" type="button">复位</button>
@@ -448,8 +462,9 @@
               <button class="node" id="base-env" data-parent="training" data-key="baseEnv" type="button"><strong>公共环境配置</strong><small>机器人 · 场景 · 关节顺序 · 观测/动作</small></button>
               <button class="node" id="locomotion-env" data-parent="training" data-key="locomotionEnv" type="button"><strong>Locomotion 行走任务</strong><small>随机速度指令 · 步态 · 速度跟踪</small></button>
               <button class="node" id="stand-env" data-parent="training" data-key="standEnv" type="button"><strong>Stand 站立任务</strong><small>零 command · 防滑 · 抑制抖动</small></button>
-              <button class="node" id="init-env" data-parent="training" data-key="initEnv" type="button"><strong>Init 趴卧起身任务</strong><small>腿部收折 · 四足支撑 · 稳定交接</small></button>
-              <button class="node" id="gym-agents" data-parent="training" data-key="gymAgents" type="button"><strong>Gym 注册与 PPO 配置</strong><small>3 个任务 · 独立 experiment_name</small></button>
+              <button class="node" id="init-env" data-parent="training" data-key="initEnv" type="button"><strong>Init 趴卧起身任务</strong><small>零指令 · 四足支撑 · 4 秒稳定保持</small></button>
+              <button class="node" id="mdp" data-parent="training" data-key="mdp" type="button"><strong>自定义 MDP 与课程</strong><small>分层指令 · 起身奖励 · 力矩约束课程</small></button>
+              <button class="node" id="gym-agents" data-parent="training" data-key="gymAgents" type="button"><strong>Gym 注册与 PPO 配置</strong><small>3 个任务 + 1 个兼容入口</small></button>
             </div>
             <button class="node branch-node" id="training" data-parent="root" data-key="training" type="button" aria-expanded="true"><strong>Isaac Lab 训练层</strong><small>定义“每个策略应该学什么”</small></button>
           </article>
@@ -465,6 +480,7 @@
 
           <article class="branch" style="--branch: var(--green)">
             <div class="children">
+              <button class="node" id="setup" data-parent="train-flow" data-key="setup" type="button"><strong>环境与资产准备</strong><small>Isaac Lab 扩展 · USD · 独立 MuJoCo 环境</small></button>
               <button class="node" id="train-script" data-parent="train-flow" data-key="trainScript" type="button"><strong>train.py</strong><small>并行环境 + RSL-RL PPO 训练</small></button>
               <button class="node" id="play-script" data-parent="train-flow" data-key="playScript" type="button"><strong>play.py</strong><small>加载 checkpoint 并导出策略</small></button>
               <button class="node" id="logs" data-parent="train-flow" data-key="logs" type="button"><strong>logs/rsl_rl</strong><small>checkpoint · 参数快照 · TensorBoard</small></button>
@@ -495,8 +511,8 @@
           <article class="branch" style="--branch: var(--violet)">
             <button class="node branch-node" id="behavior" data-parent="root" data-key="behavior" type="button" aria-expanded="true"><strong>输入与行为规划</strong><small>从用户意图到策略选择</small></button>
             <div class="children">
-              <button class="node" id="gamepad" data-parent="behavior" data-key="gamepad" type="button"><strong>gamepad.py</strong><small>Linux input-event → [vx, vy, wz]</small></button>
-              <button class="node" id="supervisor" data-parent="behavior" data-key="supervisor" type="button"><strong>supervisor.py</strong><small>迟滞 · 驻留时间 · 未站立/Init 判断</small></button>
+              <button class="node" id="gamepad" data-parent="behavior" data-key="gamepad" type="button"><strong>gamepad.py</strong><small>摇杆速度 · RB 起身 · 可选 LB 使能</small></button>
+              <button class="node" id="supervisor" data-parent="behavior" data-key="supervisor" type="button"><strong>supervisor.py</strong><small>6 状态 · 等待触发 · 稳定确认 · 迟滞</small></button>
               <button class="node" id="behaviors" data-parent="behavior" data-key="behaviors" type="button"><strong>behaviors.py</strong><small>状态 → locomotion / stand / Init</small></button>
               <button class="node" id="transition" data-parent="behavior" data-key="transition" type="button"><strong>transition.py</strong><small>command 限速 + action 平滑混合</small></button>
             </div>
@@ -518,7 +534,7 @@
               <button class="node" id="setup-check" data-parent="validation" data-key="setupCheck" type="button"><strong>基础检查</strong><small>MJCF · 映射 · 维度 · 零动作 PD</small></button>
               <button class="node" id="policy-check" data-parent="validation" data-key="policyCheck" type="button"><strong>策略导出检查</strong><small>TorchScript ↔ ONNX 输出对比</small></button>
               <button class="node" id="trajectory-check" data-parent="validation" data-key="trajectoryCheck" type="button"><strong>跨仿真轨迹对拍</strong><small>Isaac probe ↔ MuJoCo CSV</small></button>
-              <button class="node" id="tests-docs" data-parent="validation" data-key="testsDocs" type="button"><strong>测试与文档</strong><small>23 项回归测试 · 工作流 · 映射指南</small></button>
+              <button class="node" id="tests-docs" data-parent="validation" data-key="testsDocs" type="button"><strong>验证脚本与文档</strong><small>检查入口 · 工作流 · 映射指南</small></button>
             </div>
           </article>
         </div>
@@ -544,37 +560,83 @@
     <section class="section-card">
       <div class="section-head">
         <h2>运行时端到端主链路</h2>
-        <p>这条链路解释“手柄为什么不会直接控制电机”：手柄只产生速度意图，真正的关节动作由当前底层策略根据机器人反馈计算。</p>
+        <p>启用 Supervisor 后，每个策略周期先读取输入和机器人反馈，再选择行为。WAITING_INIT 使用固定趴姿保持动作，其余可运行状态由对应策略生成动作。</p>
       </div>
       <div class="pipeline">
-        <div class="step"><b>01 输入</b><strong>手柄 / CLI</strong><span>raw [vx, vy, wz]</span></div>
-        <div class="step"><b>02 决策</b><strong>Supervisor</strong><span>选择行为并过滤 command</span></div>
-        <div class="step"><b>03 路由</b><strong>BehaviorPolicies</strong><span>选择 locomotion / stand / Init</span></div>
-        <div class="step"><b>04 感知</b><strong>robot.state()</strong><span>读取基座和 12 个关节状态</span></div>
+        <div class="step"><b>01 输入</b><strong>手柄 / CLI</strong><span>速度指令；手柄另提供 RB 起身请求</span></div>
+        <div class="step"><b>02 感知</b><strong>机器人状态</strong><span>基座、关节及四足接触反馈</span></div>
+        <div class="step"><b>03 决策</b><strong>Supervisor</strong><span>选择行为、过滤 command；异常时结束</span></div>
+        <div class="step"><b>04 路由</b><strong>BehaviorPolicies</strong><span>趴姿保持 / Init / stand / locomotion</span></div>
         <div class="step"><b>05 推理</b><strong>48 → Policy → 12</strong><span>构造观测并执行 ONNX</span></div>
         <div class="step"><b>06 过渡</b><strong>ActionBlender</strong><span>切策略时连续混合动作</span></div>
         <div class="step"><b>07 控制</b><strong>PD + 力矩限制</strong><span>q_target → τ，限制 ±30 Nm</span></div>
-        <div class="step"><b>08 仿真</b><strong>MuJoCo.step()</strong><span>推进状态并回到第 04 步</span></div>
+        <div class="step"><b>08 仿真</b><strong>mujoco.mj_step()</strong><span>200 Hz 更新 PD 与物理；50 Hz 重走输入链路</span></div>
       </div>
     </section>
 
     <section class="section-card">
       <div class="section-head">
         <h2>Supervisor 状态机</h2>
-        <p>普通切换由 command 活跃度、迟滞阈值和持续时间决定；跌倒检测的优先级高于普通行为切换。</p>
+        <p>默认从趴姿等待 RB。Init 仅覆盖腹部朝地且接近水平的姿态；正常运动状态下的未站立检测优先于行走切换。</p>
       </div>
       <div class="state-layout">
-        <div class="state-flow">
-          <span class="state">STAND</span><span class="arrow">明确运动指令 →</span>
-          <span class="state">WALK</span><span class="arrow">指令归零 →</span>
-          <span class="state">STOPPING</span><span class="arrow">实际速度稳定 →</span>
-          <span class="state">STAND</span>
-          <span class="arrow">任意正常状态跌倒 →</span>
-          <span class="state">INIT</span><span class="arrow">高度/姿态稳定 → STAND</span>
-          <span class="state danger">DISABLED</span><span class="arrow">无 Init 策略或状态异常</span>
+        <div class="state-routes">
+          <div class="state-route"><h3>趴姿起身</h3><div class="state-flow">
+            <span class="state">WAITING_INIT</span><span class="arrow">RB 请求 →</span>
+            <span class="state">INIT</span><span class="arrow">四足支撑且连续稳定 →</span><span class="state">STAND</span>
+          </div></div>
+          <div class="state-route"><h3>行走与停止</h3><div class="state-flow">
+            <span class="state">STAND</span><span class="arrow">持续运动指令 →</span>
+            <span class="state">WALK</span><span class="arrow">指令低于退出阈值 →</span>
+            <span class="state">STOPPING</span><span class="arrow">稳定或超时 → STAND；指令恢复 → WALK</span>
+          </div></div>
+          <div class="state-route"><h3>未站立与异常处理</h3><div class="state-flow">
+            <span class="arrow">正常状态回到支持的趴姿且有 Init 模型 → WAITING_INIT，重新等待 RB</span>
+            <span class="state danger">DISABLED</span><span class="arrow">不支持的姿态、起身倾角超限或异常状态 → 结束本次仿真</span>
+          </div></div>
         </div>
-        <div class="note"><strong>关键区别：</strong>状态机决定“运行哪个策略”和“给策略什么 command”，不会自己计算关节角。关节动作仍来自 stand、locomotion 或 Init policy。</div>
+        <div class="note"><strong>当前起身完成条件：</strong>高度 &gt; 0.36 m、倾角 &lt; 0.25 rad、平面速度 &lt; 0.05 m/s、角速度模长 &lt; 0.10 rad/s，四足接触并连续保持 0.50 秒。Init 倾角达到 0.55 rad 时中止。<br><br>WAITING_INIT、INIT 和 STAND 的 command 均为零；STOPPING 继续使用行走策略并平滑减速。缺少站立模型时回退到零指令行走策略；未站立且缺少 Init 模型时进入 DISABLED。阈值以 TOML 为准。</div>
       </div>
+    </section>
+
+    <section class="section-card">
+      <div class="section-head"><h2>任务与训练配置</h2><p>默认 2048 个并行环境，PPO 网络为三层 128 单元、ELU 激活；可通过命令行覆盖环境数和迭代数。</p></div>
+      <div class="table-scroll"><table>
+        <thead><tr><th scope="col">任务</th><th scope="col">目标 / 指令</th><th scope="col">回合 / 迭代</th><th scope="col">日志目录（logs/rsl_rl/ 下）</th></tr></thead>
+        <tbody>
+          <tr><td><code>BPX-Locomotion-v0</code></td><td>10% 静止、25% 纯旋转、65% 混合运动</td><td>20 秒 / 1500</td><td><code>bpx_locomotion</code></td></tr>
+          <tr><td><code>BPX-Stand-v0</code></td><td>零指令稳定站立</td><td>15 秒 / 1500</td><td><code>bpx_stand</code></td></tr>
+          <tr><td><code>BPX-Init-v0</code></td><td>零指令趴卧起身与稳定保持</td><td>4 秒 / 3000</td><td><code>bpx_init</code></td></tr>
+          <tr><td><code>BPX-Test-v0</code></td><td>行走任务兼容入口</td><td>20 秒 / 1500</td><td><code>bpx_flat</code></td></tr>
+        </tbody>
+      </table></div>
+      <p>行走范围：vx ±1.0 m/s、vy ±0.5 m/s、wz ±1.0 rad/s。Init 的力矩惩罚课程在收集至少 4096 个回合后，根据最近最多 8192 个回合的成功率，将权重从 −0.1 逐渐调整为 −1.0；成功率区间为 70%～90%。</p>
+    </section>
+
+    <section class="section-card">
+      <div class="section-head"><h2>从训练到运行</h2><p>所有命令在项目根目录执行。完整参数与资产准备步骤见 <a href="README.md">中文 README</a>。</p></div>
+      <div class="reading-grid">
+        <div class="reading-item"><em>01 环境</em><b>准备训练依赖与 USD</b><span>项目基线为 Isaac Lab 2.2.1；扩展安装不会自动安装 Isaac Sim。USD 被 Git 忽略，需复制完整资产或从 URDF 转换。</span></div>
+        <div class="reading-item"><em>02 训练</em><b>三个任务分别训练</b><span>先用少量环境短训练检查流程，再训练各策略。用 TensorBoard 查看奖励、回合长度和课程指标。</span></div>
+        <div class="reading-item"><em>03 导出</em><b>play.py 自动导出</b><span>每个检查点目录下生成 exported/policy.pt 与 policy.onnx。MuJoCo 加载导出模型，不直接加载 model_*.pt。</span></div>
+        <div class="reading-item"><em>04 部署</em><b>更新 TOML 模型路径</b><span>相对路径以项目根目录解析。日志与模型被 Git 忽略；默认路径不会自动选择新训练的模型。</span></div>
+      </div>
+      <pre><code># Isaac Lab 环境：安装、列出任务、短训练
+python -m pip install -e source/BPX_test
+python scripts/list_envs.py
+python scripts/rsl_rl/train.py --task BPX-Locomotion-v0 --num_envs 64 --max_iterations 2 --headless
+
+# 回放并导出；实际使用时分别选择三个任务的目标检查点
+python scripts/rsl_rl/play.py --task BPX-Locomotion-v0 --num_envs 1 --real-time
+
+# 独立 MuJoCo 环境（Python 3.11+）：安装与模型检查
+python -m pip install -r sim2sim/requirements.txt
+python sim2sim/validate_setup.py
+
+# 填好 TOML 中三个 ONNX 模型路径后，连接手柄并按 RB 起身
+python sim2sim/run_mujoco.py --list-gamepads
+python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --duration 120 --log sim2sim/logs/gamepad.csv</code></pre>
+      <div class="note"><strong>无手柄测试：</strong>仅启用 Supervisor 不会自动触发起身。直接测试行走策略时，请复制配置，将 base_position 改为 [0, 0, 0.40]，joint_position 改为默认站姿，再以单策略模式运行。default_joint_position 是策略动作零点，不能改成趴姿。</div>
     </section>
 
     <section class="section-card">
@@ -590,7 +652,7 @@
       </div>
     </section>
 
-    <footer>离线单文件 · 不依赖 CDN · 源码链接均相对于工程根目录</footer>
+    <footer>离线单文件 · 不依赖 CDN · 源码链接均相对于工程根目录 · 参数以当前源码、TOML 和训练 params/ 为准</footer>
   </div>
 
   <script>
@@ -619,10 +681,26 @@
         output: "BpxBaseEnvCfg，供三个任务配置继承",
         files: [["bpx_base_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"]]
       },
+      setup: {
+        category: "SETUP",
+        title: "环境与资产准备",
+        text: "训练使用已安装 Isaac Lab、Isaac Sim 和 RSL-RL 的环境，再以 editable 方式安装 source/BPX_test。USD 文件被 Git 忽略，首次克隆需准备完整资产。MuJoCo 可使用独立 Python 3.11+ 环境，安装 sim2sim/requirements.txt；TorchScript 另需 torch。",
+        input: "训练依赖、完整 USD 资产、MJCF 与网格",
+        output: "可列出四个 Gym 入口的训练环境，以及可运行 validate_setup.py 的推理环境",
+        files: [["安装与运行说明", "README.md"], ["MuJoCo 依赖", "sim2sim/requirements.txt"], ["列出任务", "scripts/list_envs.py"], ["USD 转换配置", "source/BPX_test/BPX_test/BPX_structure/usd/config.yaml"]]
+      },
+      mdp: {
+        category: "MDP · CURRICULUM",
+        title: "自定义指令、奖励与课程",
+        text: "行走指令按 10% 静止、25% 纯旋转、65% 混合运动采样。Init 奖励覆盖高度、姿态、四足支撑、前足宽度和稳定保持；课程按回合结束时的 recovered 成功率调整力矩超限惩罚。至少 4096 回合、最近最多 8192 回合的窗口，70%～90% 成功率对应权重 −0.1～−1.0；成功率下降时约束也会减弱。",
+        input: "速度范围、机器人状态与回合结束时的成功判定",
+        output: "训练指令、奖励和动态力矩惩罚权重",
+        files: [["分层速度指令", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/velocity_commands.py"], ["奖励函数", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/rewards.py"], ["成功率课程", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/curriculums.py"]]
+      },
       locomotionEnv: {
         category: "TASK · LOCOMOTION",
         title: "Locomotion 行走任务",
-        text: "训练策略跟踪 vx、vy、wz 随机速度指令。奖励包含线速度/偏航跟踪、足端腾空时间、姿态稳定、平滑动作和非法接触惩罚。",
+        text: "训练策略跟踪 vx、vy、wz，范围分别为 ±1.0 m/s、±0.5 m/s、±1.0 rad/s，每 10 秒重采样。指令包含静止、纯旋转和混合运动。奖励包含速度跟踪、足端腾空、姿态稳定、动作平滑和非法接触惩罚；回合 20 秒，默认 1500 次迭代。",
         input: "随机速度 command、直立附近重置、周期推力",
         output: "可根据速度指令行走的 locomotion policy",
         files: [["bpx_locomotion_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_locomotion_env_cfg.py"], ["PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/bpx_locomotion_ppo_cfg.py"]]
@@ -630,23 +708,23 @@
       standEnv: {
         category: "TASK · STAND",
         title: "Stand 静止站立任务",
-        text: "command 永远为零，策略专门学习主动平衡而不小踏步。奖励重点抑制机身六维运动、足端滑动、关节速度和动作变化，同时保持目标高度与水平姿态。",
+        text: "command 始终为零，目标是在主动平衡时减少小踏步。奖励抑制机身六维运动、足端滑动、关节速度和动作变化，同时保持约 0.40 m 高度与水平姿态；回合 15 秒，默认 1500 次迭代。",
         input: "零速度 command、默认站姿附近随机扰动",
-        output: "零指令下更安静、抗小推力的 stand policy",
+        output: "用于零指令平衡的 stand policy，效果需回放验证",
         files: [["bpx_stand_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_stand_env_cfg.py"], ["PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/bpx_stand_ppo_cfg.py"]]
       },
       initEnv: {
         category: "TASK · INIT",
         title: "Init 趴卧起身任务",
-        text: "机器人从腹部朝地、机身贴地、四腿收折的状态开始，通过实际高度进度、关节站姿、四足支撑、成功站立和末端稳定奖励学习起身。4 秒 episode 用于继续训练稳定交接。",
-        input: "趴卧根状态、收折关节姿态、零 command",
-        output: "达到可切换 stand 策略状态的四足稳定 Init policy",
+        text: "从腹部朝地、小腿贴地且足端朝前的低位趴姿开始，学习起身到约 0.40 m 并稳定保持。整个 4 秒回合中 command 恒为零，不用指令槽位编码进度。包含前足宽度约束和成功率驱动的力矩惩罚课程，默认训练 3000 次迭代；不覆盖侧翻或仰翻恢复。",
+        input: "约 0.133 m 趴姿、髋俯仰约 0.98 rad、膝约 −2.62 rad、零 command",
+        output: "供 Supervisor 调用的 Init policy，起身与交接效果需跨仿真验证",
         files: [["bpx_init_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_init_env_cfg.py"], ["Init 奖励函数", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/rewards.py"], ["PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/bpx_init_ppo_cfg.py"]]
       },
       gymAgents: {
         category: "REGISTRY + PPO",
         title: "Gym 注册与 PPO 配置",
-        text: "注册 BPX-Locomotion-v0、BPX-Stand-v0 和 BPX-Init-v0；BPX-Test-v0 保留为旧行走任务兼容入口。三个新任务分别写入独立日志目录。",
+        text: "注册三个训练任务及 BPX-Test-v0 兼容入口，分别写入独立日志目录。PPO 默认 actor/critic 均为 [128,128,128] ELU，每环境采集 24 步，每 50 次迭代保存检查点；行走/站立默认 1500 次迭代，Init 为 3000 次。",
         input: "环境配置类与 RSL-RL runner 配置类",
         output: "可被 train.py / play.py 按 task ID 加载的 Gym spec",
         files: [["任务注册", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/__init__.py"], ["公共 PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/rsl_rl_ppo_cfg.py"], ["旧环境兼容层", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_test_env_cfg.py"]]
@@ -670,7 +748,7 @@
       usd: {
         category: "ASSET · ISAAC",
         title: "USD 资产",
-        text: "Isaac Lab 通过 USD 生成 articulation，并在 PhysX 中应用接触、摩擦、隐式 PD 执行器和并行环境复制。",
+        text: "Isaac Lab 通过 USD 生成 articulation，并在 PhysX 中应用接触、摩擦、隐式 PD 与并行环境复制。bpx.usd 及其引用的 USD 文件被 Git 忽略；首次克隆需复制完整资产或参照 config.yaml 转换 URDF。保留足端独立刚体用于接触检测。",
         input: "URDF 转换结果与 USD 转换参数",
         output: "训练环境中的 Robot articulation",
         files: [["USD 转换配置", "source/BPX_test/BPX_test/BPX_structure/usd/config.yaml"], ["USD 目录", "source/BPX_test/BPX_test/BPX_structure/usd/"]]
@@ -710,10 +788,10 @@
       logs: {
         category: "ARTIFACTS",
         title: "logs/rsl_rl",
-        text: "按策略分为 bpx_locomotion、bpx_stand、bpx_init；旧任务仍使用 bpx_flat。每个时间戳目录保存模型、环境参数、agent 参数和 exported 文件。",
+        text: "按策略分为 bpx_locomotion、bpx_stand、bpx_init；兼容任务使用 bpx_flat。每次运行保存检查点、params 参数快照与训练指标，play.py 再生成 exported。logs/ 被 Git 忽略，不保证随仓库提供；TOML 的模型路径需指向实际导出文件。",
         input: "训练过程、checkpoint 保存和 play 导出",
         output: "可追溯、可比较、可恢复的实验记录",
-        files: [["logs/rsl_rl", "logs/rsl_rl/"]]
+        files: [["日志与导出说明", "README.md"], ["模型路径配置", "sim2sim/config/bpx_flat.toml"], ["训练曲线说明", "RL_TRAINING_CURVES.md"]]
       },
       simCore: {
         category: "MUJOCO",
@@ -726,7 +804,7 @@
       simConfig: {
         category: "SIM2SIM · CONFIG",
         title: "集中配置与校验",
-        text: "TOML 保存模型路径、关节顺序、默认角、动作缩放、PD 增益、时序、command 和 Supervisor 阈值；config.py 负责解析、路径解析和参数合法性检查。",
+        text: "TOML 集中保存模型路径、接口、PD、时序与状态机阈值；相对路径以项目根目录解析。默认从 0.133 m 趴姿启动。joint_position 是复位姿态，default_joint_position 是策略动作零点，不能混用。模型路径指向具体实验，不会自动跟随新训练结果。",
         input: "bpx_flat.toml",
         output: "不可变的 Sim2SimConfig 对象",
         files: [["bpx_flat.toml", "sim2sim/config/bpx_flat.toml"], ["config.py", "sim2sim/bpx_sim2sim/config.py"]]
@@ -750,7 +828,7 @@
       runner: {
         category: "SIM2SIM · LOOP",
         title: "闭环运行器",
-        text: "200 Hz 推进 MuJoCo 与更新 PD 力矩；50 Hz 读取 command、更新 Supervisor、选择策略、构造观测和推理。还负责策略 action 混合、跌倒终止、viewer 与 CSV。",
+        text: "200 Hz 更新 PD 并推进物理；50 Hz 读取指令与 RB 请求、更新 Supervisor、选择策略并推理。等待起身时用固定动作保持趴姿。DISABLED 会结束本次仿真；普通跌倒提前终止需显式传入 --terminate-on-fall。CSV 记录状态机、指令、实际动作及切换诊断。",
         input: "Config、Policy、可选 Supervisor/Gamepad",
         output: "仿真结果和策略频率诊断日志",
         files: [["runner.py", "sim2sim/bpx_sim2sim/runner.py"], ["run_mujoco.py", "sim2sim/run_mujoco.py"]]
@@ -758,31 +836,31 @@
       behavior: {
         category: "HIGH-LEVEL CONTROL",
         title: "输入与行为规划",
-        text: "上层把用户速度意图和机器人安全状态转换成离散行为，再路由到对应专家策略。该层不直接产生关节角或力矩。",
-        input: "raw command、机身高度/倾角/实际速度、策略可用性",
+        text: "上层结合速度指令、RB 起身请求和机器人反馈决定等待、起身、站立、行走或停止。等待阶段路由到固定趴姿保持动作，其余运行状态路由到专家策略；异常状态结束本次仿真。",
+        input: "raw command、RB 请求、高度/倾角/速度/足端接触、策略可用性",
         output: "行为模式、过滤后 command 和当前底层 Policy",
         files: [["supervisor.py", "sim2sim/bpx_sim2sim/supervisor.py"], ["behaviors.py", "sim2sim/bpx_sim2sim/behaviors.py"]]
       },
       gamepad: {
         category: "INPUT",
         title: "Linux 游戏手柄输入",
-        text: "读取 /dev/input/eventN，使用轴标定、死区、符号和最大速度把摇杆转换成 vx、vy、wz。可选 LB deadman 确保松手立即输出精确零指令。",
+        text: "读取 Linux /dev/input/eventN，将左摇杆上下/左右映射为 vx/vy，右摇杆左右映射为 wz，默认死区 0.1。RB 按下沿产生一次起身请求；可选 --gamepad-deadman 要求按住 LB 才接受非零速度，松开时原始速度指令归零，实际停止仍经过状态机和指令平滑。",
         input: "Linux input-event 轴与按键事件",
-        output: "每个策略周期更新的 raw [vx, vy, wz]",
+        output: "每个策略周期的 raw [vx, vy, wz] 与一次性 Init 请求",
         files: [["gamepad.py", "sim2sim/bpx_sim2sim/gamepad.py"], ["CLI 接线", "sim2sim/run_mujoco.py"]]
       },
       supervisor: {
         category: "STATE MACHINE",
         title: "BehaviorSupervisor",
-        text: "使用归一化 command 活跃度、进入/退出迟滞、连续成立时间、最短驻留时间以及高度/倾角阈值决定 INIT、STAND、WALK、STOPPING 或 DISABLED。",
-        input: "raw command + SupervisorState + dt",
+        text: "六种状态为 WAITING_INIT、INIT、STAND、WALK、STOPPING、DISABLED。低高度且近水平时等待 RB；起身完成需高度、倾角、速度与四足接触连续达标。侧翻/仰翻不进入 Init，起身倾角超限则中止。行走切换使用归一化指令活跃度、迟滞和持续时间。",
+        input: "raw command + SupervisorState（含足端接触）+ dt + init_requested",
         output: "SupervisorDecision(mode, filtered command, reason)",
         files: [["supervisor.py", "sim2sim/bpx_sim2sim/supervisor.py"], ["阈值配置", "sim2sim/config/bpx_flat.toml"]]
       },
       behaviors: {
         category: "POLICY ROUTING",
         title: "BehaviorPolicies",
-        text: "把行为模式映射到专家策略。STAND 无专用模型时回退 locomotion+零 command；INIT 无模型时由 Supervisor 进入 DISABLED，避免调用不存在的控制器。",
+        text: "WAITING_INIT 使用 prone_hold 固定动作，INIT 使用起身策略，STAND 使用站立策略，WALK 与 STOPPING 均使用行走策略。缺少站立模型时回退到零 command 的行走策略；未站立且缺少 Init 模型时进入 DISABLED，不再执行策略。",
         input: "BehaviorMode 与已加载策略集合",
         output: "当前应执行的 Policy 对象及可读名称",
         files: [["behaviors.py", "sim2sim/bpx_sim2sim/behaviors.py"]]
@@ -806,8 +884,8 @@
       observation: {
         category: "CONTRACT · OBS",
         title: "48 维观测",
-        text: "按顺序拼接：base_lin_vel 3、base_ang_vel 3、projected_gravity 3、velocity_command 3、joint_pos_rel 12、joint_vel 12、last_action 12。",
-        input: "机器人当前状态、过滤后 command、上一策略动作",
+        text: "按顺序拼接：机身系线速度 3、角速度 3、重力投影 3、[vx,vy,wz] 指令 3、相对关节角 12、相对关节速度 12、上一实际动作 12。训练添加观测噪声，MuJoCo 推理不添加；等待和起身时三个指令槽位均为零。",
+        input: "机器人当前状态、过滤后 command、上一帧实际施加的混合动作",
         output: "shape=(48,) 的策略输入",
         files: [["训练侧观测", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["部署侧构造", "sim2sim/bpx_sim2sim/robot.py"]]
       },
@@ -822,7 +900,7 @@
       jointOrder: {
         category: "CONTRACT · MAPPING",
         title: "唯一关节顺序",
-        text: "BPX_POLICY_JOINT_NAMES 是策略张量的语义索引。动作、关节位置、关节速度、MuJoCo joint 和 actuator 都必须按名称解析为相同顺序。",
+        text: "BPX_POLICY_JOINT_NAMES 按类型排列：四个髋横滚、四个髋俯仰、四个膝关节；每组内均为 fl→fr→hl→hr。动作、关节观测、MuJoCo joint 与 actuator 必须按名称映射到这个顺序，不能直接使用 XML 存储顺序。",
         input: "显式 12 关节名称列表",
         output: "不会错腿、错轴的观测与动作映射",
         files: [["顺序源定义", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["映射指南", "sim2sim/JOINT_ORDER_MAPPING_GUIDE.md"]]
@@ -830,9 +908,9 @@
       timing: {
         category: "CONTRACT · TIMING",
         title: "时序与控制参数",
-        text: "训练和 MuJoCo 均使用 dt=0.005 s 的 200 Hz 物理步；decimation=4 得到 50 Hz 策略周期。执行器共同使用 Kp=40、Kd=1、最大力矩 30 Nm。",
+        text: "两端物理步长均为 0.005 s（200 Hz），decimation=4（策略 50 Hz），名义 Kp=40、Kd=1、力矩限制 30 Nm。Isaac Lab 使用隐式 PD，MuJoCo 默认显式 PD；训练还有增益随机化，参数相同不代表响应完全一致。",
         input: "环境与 TOML 控制参数",
-        output: "与训练分布一致的闭环响应",
+        output: "对齐名义控制参数，并通过跨仿真轨迹检查实际差异",
         files: [["训练时序", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["部署时序", "sim2sim/config/bpx_flat.toml"]]
       },
       validation: {
@@ -854,26 +932,26 @@
       policyCheck: {
         category: "VALIDATION · EXPORT",
         title: "策略导出一致性",
-        text: "对相同随机观测比较 TorchScript 与 ONNX 输出，避免导出、opset、dtype 或输入 shape 变化导致部署模型与原 actor 不一致。",
+        text: "对相同随机观测比较 TorchScript 与 ONNX 输出，默认 100 个样本、最大绝对误差容差 1e-5。必须先将 TOML 中两个路径指向同一检查点的导出模型；默认路径可能来自不同实验。运行环境同时需要 torch 与 onnxruntime。",
         input: "policy.pt、policy.onnx 和随机 48 维样本",
-        output: "最大/平均动作差异",
+        output: "最大绝对动作误差与通过/失败结果",
         files: [["validate_policy_export.py", "sim2sim/validate_policy_export.py"]]
       },
       trajectoryCheck: {
         category: "VALIDATION · DYNAMIC",
         title: "跨仿真轨迹对拍",
-        text: "probe_isaaclab 生成确定性 Isaac 基准；MuJoCo CSV 记录相同时序的状态、动作和力矩；compare_trajectories 按时间对齐并计算 RMSE。",
+        text: "probe_isaaclab 固定随机种子、关闭噪声与部分随机化，导出 Isaac 观测和轨迹。其关节名称/默认角元数据来自 TOML，不能代替运行时顺序核对。MuJoCo 对拍需另用站姿配置并匹配策略、指令和时间覆盖；compare_trajectories 按最近时间样本计算误差，不插值。",
         input: "Isaac JSON 与 MuJoCo CSV",
         output: "关节、基座、动作等跨仿真误差",
-        files: [["probe_isaaclab.py", "sim2sim/probe_isaaclab.py"], ["compare_trajectories.py", "sim2sim/compare_trajectories.py"]]
+        files: [["probe_isaaclab.py", "sim2sim/probe_isaaclab.py"], ["compare_trajectories.py", "sim2sim/compare_trajectories.py"], ["对拍操作与限制", "sim2sim/README.md"]]
       },
       testsDocs: {
         category: "TESTS + DOCS",
-        title: "回归测试与说明文档",
-        text: "tests 覆盖观测/映射、动态 command、策略路由、action 混合、状态机迟滞和游戏手柄标定；Markdown 保存完整工作流与关节顺序排错经验。",
-        input: "核心模块的确定性行为",
-        output: "防回归测试和可维护的工程知识",
-        files: [["测试目录", "sim2sim/tests/"], ["工作流", "sim2sim/BPX_SIM2SIM_WORKFLOW.md"], ["关节指南", "sim2sim/JOINT_ORDER_MAPPING_GUIDE.md"]]
+        title: "验证入口与说明文档",
+        text: "先运行 validate_setup.py 检查模型和 PD，再比较同一检查点的两种导出，最后对齐初始姿态和指令做轨迹比较。本机 sim2sim/tests/ 有回归测试，但 tests/ 被 Git 忽略，不保证随仓库提供；测试数量与通过状态应以实际执行结果为准。部分专题文档保留早期实验参数，当前源码和 params/ 优先。",
+        input: "模型、配置、导出策略与实际运行记录",
+        output: "分层验证结果与可追溯的工程说明",
+        files: [["项目说明", "README.md"], ["基础验证", "sim2sim/validate_setup.py"], ["工作流", "sim2sim/BPX_SIM2SIM_WORKFLOW.md"], ["关节指南", "sim2sim/JOINT_ORDER_MAPPING_GUIDE.md"]]
       }
     };
 
@@ -964,6 +1042,7 @@
 
     document.getElementById("resetView").addEventListener("click", () => {
       document.getElementById("search").value = "";
+      document.getElementById("searchStatus").textContent = "";
       nodes.forEach((node) => node.classList.remove("match", "selected"));
       document.getElementById("root").classList.add("selected");
       branches.forEach((branch) => branch.classList.remove("collapsed"));
@@ -976,14 +1055,27 @@
     document.getElementById("search").addEventListener("input", (event) => {
       const query = event.target.value.trim().toLowerCase();
       nodes.forEach((node) => node.classList.remove("match"));
-      if (!query) return;
-      const matches = nodes.filter((node) => node.textContent.toLowerCase().includes(query) || (node.dataset.key || "").toLowerCase().includes(query));
+      const status = document.getElementById("searchStatus");
+      if (!query) {
+        status.textContent = "";
+        return;
+      }
+      const matches = nodes.filter((node) => {
+        const item = details[node.dataset.key];
+        return `${node.textContent} ${node.dataset.key} ${JSON.stringify(item)}`.toLowerCase().includes(query);
+      });
+      status.textContent = matches.length ? `找到 ${matches.length} 个节点` : "未找到匹配节点";
       matches.forEach((node) => {
         node.classList.add("match");
         const branch = node.closest(".branch");
-        if (branch) branch.classList.remove("collapsed");
+        if (branch) {
+          branch.classList.remove("collapsed");
+          branch.querySelector(".branch-node").setAttribute("aria-expanded", "true");
+        }
       });
       if (matches[0]) {
+        nodes.forEach((node) => node.classList.remove("selected"));
+        matches[0].classList.add("selected");
         matches[0].scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
         showDetail(matches[0].dataset.key);
       }
