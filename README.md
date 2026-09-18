@@ -2,20 +2,22 @@
 
 本项目基于 Isaac Lab 的管理器式强化学习环境，使用 RSL-RL 的 PPO 算法分别训练 BPX 四足机器人的行走、静止站立和趴卧起身策略，并将导出的策略部署到 MuJoCo，验证不同物理引擎中的控制表现（sim2sim）。项目现有环境说明以 Isaac Lab 2.2.1 为基线。
 
-三个策略共享机器人模型、观测格式和动作接口。MuJoCo 端通过上层状态机（Supervisor）选择策略，支持手柄速度指令、起身触发、停止过渡、动作平滑和 CSV 日志记录。
+行走、站立、起身三类策略共享机器人模型、48 维单帧观测和 12 维动作接口；行走和站立分别提供平地与崎岖地形训练任务。MuJoCo 端通过上层状态机（Supervisor）选择策略，支持手柄速度指令、起身触发、停止过渡、动作平滑和 CSV 日志记录。
 
 ## 任务与功能
 
 | Gym 任务名称 | 训练目标 | 回合时长 | 默认训练迭代数 | 日志目录 |
 | --- | --- | --- | --- | --- |
 | `BPX-Locomotion-v0` | 平地前后、横向移动及偏航速度跟踪 | 20 秒 | 1500 | `logs/rsl_rl/bpx_locomotion/` |
+| `BPX-Locomotion-Rough-v0` | 平台复位、课程起伏地形上的盲走 | 20 秒（含边界截断） | 1500 | `logs/rsl_rl/bpx_rough/` |
 | `BPX-Stand-v0` | 零速度指令下保持稳定站姿 | 15 秒 | 1500 | `logs/rsl_rl/bpx_stand/` |
+| `BPX-Stand-Rough-v0` | 崎岖区域复位、站稳课程训练 | 15 秒 | 1500 | `logs/rsl_rl/bpx_rough_stand/` |
 | `BPX-Init-v0` | 从腹部朝地的趴卧状态起身并保持站立 | 4 秒 | 3000 | `logs/rsl_rl/bpx_init/` |
 | `BPX-Test-v0` | 行走任务的兼容入口 | 20 秒 | 1500 | `logs/rsl_rl/bpx_flat/` |
 
-行走任务的指令范围为 `vx ∈ [-1.0, 1.0] m/s`、`vy ∈ [-0.5, 0.5] m/s`、`wz ∈ [-1.0, 1.0] rad/s`，按静止、纯旋转和混合运动分层采样。站立和起身任务的三个指令分量始终为零。
+行走任务的指令范围为 `vx ∈ [-1.0, 1.0] m/s`、`vy ∈ [-0.5, 0.5] m/s`、`wz ∈ [-1.0, 1.0] rad/s`。平地行走按静止、纯旋转和混合运动分层采样，崎岖行走的三个速度分量独立均匀采样。站立和起身任务的三个指令分量始终为零。
 
-Init 针对腹部朝地、机身接近水平的趴姿训练，不覆盖侧翻或仰翻后的翻身恢复。当前任务均使用平地场景。
+Init 针对腹部朝地、机身接近水平的趴姿训练，不覆盖侧翻或仰翻后的翻身恢复。原有任务使用平地场景；新增 Rough 任务使用课程起伏地形。
 
 ## 项目结构
 
@@ -28,6 +30,9 @@ BPX_test/
 │       └── tasks/manager_based/bpx_test/
 │           ├── bpx_base_env_cfg.py  # 公共机器人、场景、观测与动作
 │           ├── bpx_locomotion_env_cfg.py
+│           ├── bpx_rough_env_cfg.py # 崎岖行走与地形配置
+│           ├── bpx_rough_stand_env_cfg.py # 崎岖站立与站稳课程
+│           ├── rough_terrain_geometry.py # 起伏地形网格生成
 │           ├── bpx_stand_env_cfg.py
 │           ├── bpx_init_env_cfg.py
 │           ├── agents/             # 各任务的 PPO 配置
@@ -36,9 +41,13 @@ BPX_test/
 │   ├── list_envs.py                 # 列出已注册的 BPX 任务
 │   ├── zero_agent.py               # 零动作环境检查
 │   ├── random_agent.py             # 随机动作环境检查
+│   ├── validate_rough_task.py       # 崎岖行走配置与课程验证
+│   ├── validate_rough_stand_task.py # 崎岖站立重置、奖励与课程验证
 │   └── rsl_rl/                     # 训练、回放与策略导出
 ├── sim2sim/
-│   ├── config/bpx_flat.toml         # 模型路径、控制参数与状态机阈值
+│   ├── config/bpx_flat.toml         # 平地、趴姿起身流程
+│   ├── config/bpx_terrain.toml      # 三级地形、趴姿起身流程
+│   ├── config/bpx_terrain_standing.toml # 三级地形、站姿直接测试
 │   ├── bpx_sim2sim/                # MuJoCo 运行器、策略与手柄接口
 │   ├── run_mujoco.py               # 跨仿真运行入口
 │   ├── validate_setup.py           # 模型、关节映射与 PD 检查
@@ -60,7 +69,7 @@ python -m pip install -e source/BPX_test
 python scripts/list_envs.py
 ```
 
-`list_envs.py` 应列出上表中的四个任务。项目安装脚本不会自动安装完整的 Isaac Lab / Isaac Sim 运行环境；若使用 Isaac Lab 自带的启动脚本，可将命令中的 `python` 替换为 `/path/to/IsaacLab/isaaclab.sh -p`。
+`list_envs.py` 应列出上表中的六个任务。项目安装脚本不会自动安装完整的 Isaac Lab / Isaac Sim 运行环境；若使用 Isaac Lab 自带的启动脚本，可将命令中的 `python` 替换为 `/path/to/IsaacLab/isaaclab.sh -p`。
 
 **首次克隆后请检查机器人资产。** 训练需要 `source/BPX_test/BPX_test/BPX_structure/usd/bpx.usd` 及其引用的 USD 文件。仓库的 `.gitignore` 忽略了 USD 文件，因此仅克隆代码可能缺少这些资产。需要复制完整 USD 资产，或使用 Isaac Lab 的 URDF 转换工具，参照 [转换配置](source/BPX_test/BPX_test/BPX_structure/usd/config.yaml) 从 `BPX_structure/bpx/urdf/bpx.urdf` 重新生成；保留足端固定关节对应的独立刚体，并保持转换参数与训练配置一致。
 
@@ -117,6 +126,42 @@ python scripts/rsl_rl/train.py \
     --load_run "<运行目录名>" --checkpoint "model_<迭代编号>.pt"
 ```
 
+### 从平地策略微调崎岖地形策略
+
+两个崎岖任务均采用 ±0.5～±4 cm 的 8 级起伏地形，保持原有单帧观测和动作接口，不向策略输入地形高度。
+
+| 任务 | 重置位置 | 难度课程 | 奖励 |
+| --- | --- | --- | --- |
+| `BPX-Locomotion-Rough-v0` | 中央 2×2 m 平地 | 根据崎岖区域通过距离、停留时间和速度跟踪表现升降级 | 沿用平地行走奖励 |
+| `BPX-Stand-Rough-v0` | 90% 崎岖区域、10% 中央平地 | 崎岖样本连续站稳两回合升级，失败降级 | 高度改为相对附近地面，其余沿用 Stand |
+
+站立每回合 15 秒，排除前 0.5 秒落脚期后，稳定时间占比须达到 90%，同时满足速度、倾斜和漂移条件。平地样本不参与升级。地面高度查询仅用于仿真重置与奖励，不增加策略观测或实机传感器需求。
+
+以下为本机已有平地检查点的微调示例；其他机器需替换为实际文件路径：
+
+```bash
+# 崎岖行走
+python scripts/rsl_rl/train.py \
+    --task BPX-Locomotion-Rough-v0 --num_envs 512 --headless --resume \
+    --checkpoint logs/rsl_rl/bpx_locomotion/2026-09-15_13-15-43_stable/model_4999.pt \
+    --max_iterations 1500
+
+# 崎岖站立
+python scripts/rsl_rl/train.py \
+    --task BPX-Stand-Rough-v0 --num_envs 512 --headless --resume \
+    --checkpoint logs/rsl_rl/bpx_stand/2026-09-15_00-13-24_stable/model_499.pt \
+    --max_iterations 1500
+```
+
+`--resume --checkpoint` 加载训练状态，不是导出模型。`--max_iterations` 表示本次继续训练的迭代数；新日志分别写入 `bpx_rough` 和 `bpx_rough_stand`。PPO 检查点不保存地形课程状态，恢复训练后课程从最低级开始。
+
+详细参数与评估方法见 [崎岖行走训练](ROUGH_TERRAIN_TRAINING.md) 和 [崎岖站立训练](ROUGH_STAND_TRAINING.md)。需要检查实现时可运行：
+
+```bash
+python -u scripts/validate_rough_task.py --headless
+python -u scripts/validate_rough_stand_task.py --headless
+```
+
 ### 查看训练曲线
 
 ```bash
@@ -146,7 +191,17 @@ exported/
 └── policy.onnx    # ONNX 推理模型
 ```
 
-站立和起身策略采用相同流程，分别使用 `BPX-Stand-v0`、`BPX-Init-v0` 及其对应检查点。训练检查点 `model_*.pt` 与导出的 `policy.pt` 用途不同，MuJoCo 端加载导出模型。
+站立和起身策略采用相同流程，分别使用 `BPX-Stand-v0`、`BPX-Init-v0` 及其对应检查点。崎岖策略应选择对应的 Rough 任务，例如：
+
+```bash
+python scripts/rsl_rl/play.py \
+    --task BPX-Stand-Rough-v0 --num_envs 4 \
+    --checkpoint "logs/rsl_rl/bpx_rough_stand/<运行目录>/model_<迭代编号>.pt"
+```
+
+崎岖行走使用 `BPX-Locomotion-Rough-v0` 和 `bpx_rough` 目录下的检查点。
+
+训练检查点 `model_*.pt` 与导出的 `policy.pt` 用途不同，MuJoCo 端加载导出模型。
 
 ## MuJoCo 跨仿真运行
 
@@ -154,7 +209,15 @@ exported/
 
 ### 配置模型路径
 
-编辑 [sim2sim/config/bpx_flat.toml](sim2sim/config/bpx_flat.toml) 的 `[paths]`，将 `locomotion_policy`、`stand_policy`、`init_policy` 指向各自导出的 `policy.onnx`；使用 TorchScript 时同时更新 `torchscript_policy`。
+根据运行流程选择配置；三个 TOML 相互独立，不会继承或同步策略路径：
+
+| 配置 | 地形 / 初始姿态 | 用途 |
+| --- | --- | --- |
+| [bpx_flat.toml](sim2sim/config/bpx_flat.toml) | 平地 / 趴姿 | 平地手柄起身与多策略测试 |
+| [bpx_terrain.toml](sim2sim/config/bpx_terrain.toml) | 三级起伏地形 / 趴姿 | 手柄 RB 起身、崎岖行走与站立切换 |
+| [bpx_terrain_standing.toml](sim2sim/config/bpx_terrain_standing.toml) | 三级起伏地形 / 站姿 | 直接测试行走策略；文件名中的 standing 指初始姿态 |
+
+编辑实际传给 `--config` 的文件的 `[paths]`，将 `locomotion_policy`、`stand_policy`、`init_policy` 指向各自导出的 `policy.onnx`；使用 TorchScript 时同时更新 `torchscript_policy`。
 
 配置中的相对路径均相对于项目根目录解析。默认文件记录了具体实验目录，且 `logs/` 被 Git 忽略，因此这些检查点不保证随代码仓库提供，也不会自动切换到新训练的模型。
 
@@ -189,6 +252,31 @@ python sim2sim/run_mujoco.py \
 
 Supervisor 使用指令变化率限制、切换迟滞、稳定时间确认和动作混合来平滑过渡。遇到不支持的起身姿态、起身倾角过大等条件时进入 `DISABLED`，运行器结束本次仿真。缺少站立模型时会使用零指令行走策略作为回退；缺少起身模型时无法完成默认趴姿起身流程。
 
+### 三级地形与崎岖策略测试
+
+测试场依次为平地、轻微起伏（±2 cm）、较大起伏（±4 cm），带区域标签和平坦返回通道。地形振幅在 [terrain.py](sim2sim/bpx_sim2sim/terrain.py) 的 `MILD_AMPLITUDE`、`MODERATE_AMPLITUDE` 修改，单位为米；高度场归一化和标签随参数调整。
+
+在 `bpx_terrain.toml` 中，将 `locomotion_policy` 指向崎岖行走导出模型，将 `stand_policy` 指向崎岖站立导出模型，`init_policy` 保留已有起身模型，然后运行：
+
+```bash
+python sim2sim/run_mujoco.py \
+    --config sim2sim/config/bpx_terrain.toml \
+    --backend onnx --viewer --gamepad --supervisor \
+    --duration 120 --log sim2sim/logs/terrain_gamepad.csv
+```
+
+按 RB 在出生平地起身后，分别检查三个区域上的行走与站立，并测试“行走 → 停止 → 站立 → 再行走”。现有 Init 仍是平地起身策略，崎岖行走和站立训练不包含崎岖地形起身。
+
+CSV 中 `base_z` 是世界高度，`ground_z` 为当地地面高度，`base_clearance` 为局部离地高度，`terrain_region` 为当前区域。具体说明见 [三级地形使用说明](sim2sim/README.md#三级起伏地形测试场)。
+
+从站姿直接测试行走可使用现成配置，先单独更新该配置的行走模型路径：
+
+```bash
+python sim2sim/run_mujoco.py \
+    --config sim2sim/config/bpx_terrain_standing.toml \
+    --backend onnx --viewer --vx 0.2 --vy 0.0 --wz 0.0 --duration 50
+```
+
 ### 无手柄的单策略测试
 
 默认 TOML 的初始姿态是趴姿。若要直接测试行走策略，请先复制一份配置，并将 `[initial_state]` 的 `base_position` 改为 `[0.0, 0.0, 0.40]`，将 `joint_position` 设为与 `default_joint_position` 相同的站姿：
@@ -212,7 +300,7 @@ python sim2sim/validate_policy_export.py --samples 100
 
 ## 训练与部署的公共接口
 
-接口定义集中在 [bpx_base_env_cfg.py](source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py)，MuJoCo 端参数集中在 `sim2sim/config/bpx_flat.toml`。修改接口后，需要同步训练、导出和部署配置。
+接口定义集中在 [bpx_base_env_cfg.py](source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py)，MuJoCo 端参数位于实际使用的 `sim2sim/config/*.toml`。修改接口后，需要同步训练、导出和部署配置。
 
 | 项目 | 当前配置 |
 | --- | --- |
@@ -259,6 +347,8 @@ python -m pip install pre-commit
 pre-commit run --all-files
 ```
 
+- [崎岖行走课程与微调](ROUGH_TERRAIN_TRAINING.md)
+- [崎岖站立课程与微调](ROUGH_STAND_TRAINING.md)
 - [训练—导出—MuJoCo 工作流](sim2sim/BPX_SIM2SIM_WORKFLOW.md)
 - [MuJoCo 运行器与手柄使用说明](sim2sim/README.md)
 - [训练环境配置说明](BPX_ENV_SETUP.md)
@@ -268,11 +358,3 @@ pre-commit run --all-files
 - [项目交互式思维导图](BPX_PROJECT_MINDMAP.html)
 
 部分专题文档保留了早期实验记录；具体奖励权重、采样范围和运行参数以当前源码及本次训练保存的 `params/` 为准。
-
-### MuJoCo 三级地形基线测试
-
-已提供平地、轻微起伏（±1 cm）、较大起伏（±2 cm）的连续测试场，带区域标签、平坦返回通道和局部离地高度记录。
-使用 `sim2sim/config/bpx_terrain.toml` 运行原有手柄起身流程；使用
-`sim2sim/config/bpx_terrain_standing.toml` 从站姿直接测试现有行走策略。
-原平地配置仍可使用，训练任务与策略观测未改变。具体命令见
-[三级地形使用说明](sim2sim/README.md#三级起伏地形测试场)。

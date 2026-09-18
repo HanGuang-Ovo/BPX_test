@@ -210,8 +210,8 @@ CSV 记录原始与过滤后的 command、行为状态/策略、动作混合系�
 | 区域 | 世界坐标 X | 宽度 | 高度范围上限 |
 | --- | --- | --- | --- |
 | LEVEL 0 / FLAT | -2～2 m | 4 m | 0 |
-| LEVEL 1 / MILD | 2～6 m | 4 m | ±1 cm |
-| LEVEL 2 / MODERATE | 6～10 m | 4 m | ±2 cm |
+| LEVEL 1 / MILD | 2～6 m | 4 m | ±2 cm |
+| LEVEL 2 / MODERATE | 6～10 m | 4 m | ±4 cm |
 
 起伏为固定种子的平滑随机波叠加，主要波长 15～30 cm；幅值范围是上限，不保证每块地形达到上下限。
 起伏入口、难度切换、末端和两侧有 0.5 m 渐变带。两侧平坦通道供返回使用。
@@ -254,6 +254,10 @@ python sim2sim/validate_setup.py --config sim2sim/config/bpx_terrain_standing.to
 python -m unittest discover -s sim2sim -p 'test_terrain.py' -v
 ```
 
-实现时使用配置中现有 locomotion ONNX 做过一次 50 秒、vx=0.2 m/s 的无界面测试，
+早期 ±1/±2 cm 版本使用配置中现有 locomotion ONNX 做过一次 50 秒、vx=0.2 m/s 的无界面测试，
 进入全部三级区域并到达约 (10.43, -0.90) m，未触发跌倒终止。
 这是单一种子、单次直行结果，横向偏移仍然明显，不代表转向、停车或多地形通过率。
+
+地形幅度在 `bpx_sim2sim/terrain.py` 的 `MILD_AMPLITUDE` 和 `MODERATE_AMPLITUDE` 中设置（单位 m）。
+高度场缩放、Z 偏移、归一化和标签从这两个值自动计算。当前 ±4 cm 对应竖直缩放 0.08 m、
+Z 偏移 -0.04 m；不会通过截断高度数据削平峰谷。上述早期行走结果不能代表当前难度表现。

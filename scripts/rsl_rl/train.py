@@ -160,7 +160,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # save resume path before creating a new log_dir
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        # An explicit path allows flat -> rough fine-tuning while retaining the
+        # new task's experiment directory. Bare names/regex keep legacy lookup.
+        checkpoint_path = os.path.expanduser(agent_cfg.load_checkpoint)
+        if os.path.isfile(checkpoint_path):
+            resume_path = os.path.abspath(checkpoint_path)
+        elif os.path.sep in checkpoint_path:
+            raise FileNotFoundError(f"Checkpoint does not exist: {checkpoint_path}")
+        else:
+            resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
     # wrap for video recording
     if args_cli.video:

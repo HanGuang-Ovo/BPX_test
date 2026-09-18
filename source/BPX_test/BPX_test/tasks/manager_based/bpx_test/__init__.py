@@ -45,3 +45,15 @@ _register_bpx_task(
     "bpx_test_env_cfg:BpxTestEnvCfg",
     "rsl_rl_ppo_cfg:PPORunnerCfg",
 )
+
+_register_bpx_task(
+    "BPX-Locomotion-Rough-v0",
+    "bpx_rough_env_cfg:BpxRoughEnvCfg",
+    "bpx_rough_ppo_cfg:BpxRoughPPORunnerCfg",
+)
+
+_register_bpx_task(
+    "BPX-Stand-Rough-v0",
+    "bpx_rough_stand_env_cfg:BpxRoughStandEnvCfg",
+    "bpx_rough_stand_ppo_cfg:BpxRoughStandPPORunnerCfg",
+)
