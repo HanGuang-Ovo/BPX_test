@@ -268,3 +268,11 @@ pre-commit run --all-files
 - [项目交互式思维导图](BPX_PROJECT_MINDMAP.html)
 
 部分专题文档保留了早期实验记录；具体奖励权重、采样范围和运行参数以当前源码及本次训练保存的 `params/` 为准。
+
+### MuJoCo 三级地形基线测试
+
+已提供平地、轻微起伏（±1 cm）、较大起伏（±2 cm）的连续测试场，带区域标签、平坦返回通道和局部离地高度记录。
+使用 `sim2sim/config/bpx_terrain.toml` 运行原有手柄起身流程；使用
+`sim2sim/config/bpx_terrain_standing.toml` 从站姿直接测试现有行走策略。
+原平地配置仍可使用，训练任务与策略观测未改变。具体命令见
+[三级地形使用说明](sim2sim/README.md#三级起伏地形测试场)。

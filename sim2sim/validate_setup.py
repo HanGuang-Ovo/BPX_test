@@ -15,6 +15,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from bpx_sim2sim.config import load_config
 from bpx_sim2sim.robot import BpxMujocoRobot
+from bpx_sim2sim.terrain import load_model
 
 
 def main() -> int:
@@ -24,7 +25,7 @@ def main() -> int:
     args = parser.parse_args()
 
     config = load_config(args.config)
-    model = mujoco.MjModel.from_xml_path(str(config.paths.mjcf))
+    model = load_model(config)
     data = mujoco.MjData(model)
     robot = BpxMujocoRobot(model, data, config)
     robot.reset()

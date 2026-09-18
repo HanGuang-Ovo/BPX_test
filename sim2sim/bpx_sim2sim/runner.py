@@ -29,6 +29,7 @@ from .policy import ConstantPolicy, Policy
 from .robot import BpxMujocoRobot
 from .supervisor import BehaviorMode, BehaviorSupervisor, SupervisorState
 from .transition import ActionBlender
+from .terrain import load_model, add_course_labels
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,9 @@ class CsvLogger:
                 "base_x",
                 "base_y",
                 "base_z",
+                "ground_z",
+                "base_clearance",
+                "terrain_region",
                 "body_vx",
                 "body_vy",
                 "body_vz",
@@ -109,6 +113,9 @@ class CsvLogger:
             "base_x": float(base_position[0]),
             "base_y": float(base_position[1]),
             "base_z": float(base_position[2]),
+            "ground_z": robot.ground_height(),
+            "base_clearance": robot.base_height(),
+            "terrain_region": robot.terrain_region(),
             "body_vx": float(state.base_linear_velocity[0]),
             "body_vy": float(state.base_linear_velocity[1]),
             "body_vz": float(state.base_linear_velocity[2]),
@@ -174,7 +181,7 @@ class Sim2SimRunner:
                 waiting=ConstantPolicy(reset_action),
             )
         self.behavior_policies = policies
-        self.model = mujoco.MjModel.from_xml_path(str(config.paths.mjcf))
+        self.model = load_model(config)
         self.data = mujoco.MjData(self.model)
         self.robot = BpxMujocoRobot(self.model, self.data, config)
 
@@ -243,6 +250,8 @@ class Sim2SimRunner:
 
         viewer_context = _viewer_context(self.model, self.data, viewer)
         with viewer_context as active_viewer, CsvLogger(log_path, self.config.joint_names) as logger:
+            if active_viewer is not None:
+                add_course_labels(active_viewer, self.config)
             while self.data.time < run_duration:
                 wall_step_start = time.perf_counter()
                 # policy_steps 与仿真时间比较，避免墙钟抖动改变 50 Hz 策略时序。
@@ -445,7 +454,9 @@ def _viewer_overlay_text(
             "BPX MuJoCo",
             "time",
             "base position (x/y/z)",
-            "base_link height",
+            "base_link height (world)",
+            "base clearance / ground z",
+            "terrain region",
             "tilt",
             "base velocity (body)",
             "feet contact",
@@ -461,7 +472,9 @@ def _viewer_overlay_text(
             "",
             f"{robot.data.time:7.2f} s",
             f"{base_position[0]:+.3f} / {base_position[1]:+.3f} / {base_position[2]:+.3f} m",
-            f"{robot.base_height():.3f} m",
+            f"{base_position[2]:.3f} m",
+            f"{robot.base_height():.3f} / {robot.ground_height():+.3f} m",
+            robot.terrain_region(),
             f"{robot.tilt_angle():.3f} rad",
             (
                 f"{state.base_linear_velocity[0]:+.2f} / "

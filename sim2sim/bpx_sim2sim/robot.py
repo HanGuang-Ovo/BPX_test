@@ -58,6 +58,13 @@ class BpxMujocoRobot:
         self.base_dof_address = int(model.jnt_dofadr[self.base_joint_id])
         self.base_body_id = self._required_id(mujoco.mjtObj.mjOBJ_BODY, config.base_body_name)
         self.floor_geom_id = self._required_id(mujoco.mjtObj.mjOBJ_GEOM, config.floor_geom_name)
+        self.ground_geom_ids = {self.floor_geom_id} | {
+            gid for gid in range(model.ngeom)
+            if (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or "").startswith("terrain_ground_")
+        }
+        # Reserve visual group 5 for ground ray queries; no robot or decoration is included.
+        for gid in self.ground_geom_ids:
+            model.geom_group[gid] = 5
         self.toe_body_ids = {
             body_id
             for body_id in range(model.nbody)
@@ -214,8 +221,28 @@ class BpxMujocoRobot:
             self.data.ctrl[self.actuator_ids] = torque
         return desired_position, torque
 
+    def ground_height(self) -> float:
+        """Surface directly below the base, for monitoring/supervision only."""
+        position = self.data.xpos[self.base_body_id].copy()
+        position[2] = max(100.0, position[2] + 1.0)
+        geom_id = np.array([-1], dtype=np.int32)
+        distance = mujoco.mj_ray(
+            self.model, self.data, position, np.array([0., 0., -1.]),
+            np.array([0, 0, 0, 0, 0, 1], dtype=np.uint8), 1, -1, geom_id,
+        )
+        if distance < 0 or geom_id[0] not in self.ground_geom_ids:
+            raise RuntimeError("No ground below robot; outside the supported test area")
+        return float(position[2] - distance)
+
     def base_height(self) -> float:
-        return float(self.data.xpos[self.base_body_id, 2])
+        """Vertical clearance above local ground (world Z is logged separately)."""
+        return float(self.data.xpos[self.base_body_id, 2]) - self.ground_height()
+
+    def terrain_region(self) -> str:
+        if self.config.terrain.kind == "flat":
+            return "FLAT"
+        from .terrain import region_at
+        return region_at(*self.data.xpos[self.base_body_id, :2])
 
     def tilt_angle(self) -> float:
         projected_gravity = self.projected_gravity()
@@ -225,9 +252,9 @@ class BpxMujocoRobot:
         for index in range(self.data.ncon):
             contact = self.data.contact[index]
             geom1, geom2 = int(contact.geom1), int(contact.geom2)
-            if self.floor_geom_id not in (geom1, geom2):
+            if geom1 not in self.ground_geom_ids and geom2 not in self.ground_geom_ids:
                 continue
-            other_geom = geom2 if geom1 == self.floor_geom_id else geom1
+            other_geom = geom2 if geom1 in self.ground_geom_ids else geom1
             if int(self.model.geom_bodyid[other_geom]) == self.base_body_id:
                 return True
         return False
@@ -239,9 +266,9 @@ class BpxMujocoRobot:
         for index in range(self.data.ncon):
             contact = self.data.contact[index]
             geom1, geom2 = int(contact.geom1), int(contact.geom2)
-            if self.floor_geom_id not in (geom1, geom2):
+            if geom1 not in self.ground_geom_ids and geom2 not in self.ground_geom_ids:
                 continue
-            other_geom = geom2 if geom1 == self.floor_geom_id else geom1
+            other_geom = geom2 if geom1 in self.ground_geom_ids else geom1
             other_body = int(self.model.geom_bodyid[other_geom])
             if other_body in self.toe_body_ids:
                 contacting_feet.add(other_body)

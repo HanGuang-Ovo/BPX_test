@@ -200,3 +200,60 @@ python sim2sim/compare_trajectories.py \
 CSV 记录原始与过滤后的 command、行为状态/策略、动作混合系数、基座状态、关节位置/速度/目标角/动作/力矩。Viewer 的 `base_link height` 是配置中 torso body 原点的世界 Z 坐标，不是机身最低点离地距离。
 
 旧文档中的 `2e-7` 导出误差、20 秒前进与零动作 RMSE 属于早期实验记录，见 [工作流历史结果](BPX_SIM2SIM_WORKFLOW.md#14-历史验证结果)。它们不能替代当前三份策略和状态切换的复验。本目录提供验证工具；本次文档同步未重新训练或运行物理仿真。
+
+## 三级起伏地形测试场
+
+新场景在加载时从原 `bpx.xml` 生成，机器人资产、关节顺序、PD 参数和策略输入不变。
+原 `config/bpx_flat.toml` 继续用于平地测试。新增两个配置中的策略路径初始复制自平地配置；
+更换检查点时应同步修改对应配置的 `[paths]`，不会自动跟随平地配置变化。
+
+| 区域 | 世界坐标 X | 宽度 | 高度范围上限 |
+| --- | --- | --- | --- |
+| LEVEL 0 / FLAT | -2～2 m | 4 m | 0 |
+| LEVEL 1 / MILD | 2～6 m | 4 m | ±1 cm |
+| LEVEL 2 / MODERATE | 6～10 m | 4 m | ±2 cm |
+
+起伏为固定种子的平滑随机波叠加，主要波长 15～30 cm；幅值范围是上限，不保证每块地形达到上下限。
+起伏入口、难度切换、末端和两侧有 0.5 m 渐变带。两侧平坦通道供返回使用。
+这是固定路面几何，不包含可滚动碎石。各区域摩擦和接触材料保持一致。
+高度场替换原平面，避免平面填平负高度凹处；测试场外围的平整地面延伸至 X/Y=±50 m。
+
+**手柄起身和行走**（原点趴姿出生，RB 起身）：
+
+```bash
+python sim2sim/run_mujoco.py \
+  --config sim2sim/config/bpx_terrain.toml \
+  --backend onnx --viewer --gamepad --supervisor \
+  --duration 120 --log sim2sim/logs/terrain_gamepad.csv
+```
+
+**直接测试行走策略**（原点站姿出生，无需起身触发）：
+
+```bash
+python sim2sim/run_mujoco.py \
+  --config sim2sim/config/bpx_terrain_standing.toml \
+  --backend onnx --viewer --vx 0.2 --vy 0 --wz 0 \
+  --duration 60 --terminate-on-fall --log sim2sim/logs/terrain_walk.csv
+```
+
+窗口默认展示整个测试场，可缩放查看机器人及起伏。两侧边线为灰/绿/橙色，英文标签位于各区旁边，
+均不参与碰撞。状态栏显示当前区域、世界高度、局部地面高度和机身离地高度。
+
+CSV 保留原 `base_z` 世界高度，新增 `ground_z`、`base_clearance`、`terrain_region`。
+Supervisor 和跌倒终止使用机身正下方地面对应的垂直离地高度；这不是四足支撑面拟合高度。
+地面查询只用于仿真监督和记录，不进入 48 维策略观测。脚和躯干接触检测覆盖高度场和外围地面。
+地面使用可视化组 5，运行器自动开启显示；手动隐藏该组只影响显示，不影响碰撞。
+
+配置中 `[terrain]` 的 `seed` 可用于改变路面；比较不同策略时请保持相同 seed。
+训练策略没有更新，停车切换后的 Stand 以及崎岖区域重新起身仍需单独评估。
+
+验证命令：
+
+```bash
+python sim2sim/validate_setup.py --config sim2sim/config/bpx_terrain_standing.toml
+python -m unittest discover -s sim2sim -p 'test_terrain.py' -v
+```
+
+实现时使用配置中现有 locomotion ONNX 做过一次 50 秒、vx=0.2 m/s 的无界面测试，
+进入全部三级区域并到达约 (10.43, -0.90) m，未触发跌倒终止。
+这是单一种子、单次直行结果，横向偏移仍然明显，不代表转向、停车或多地形通过率。

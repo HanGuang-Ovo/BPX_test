@@ -137,6 +137,12 @@ class SupervisorConfig:
 
 
 @dataclass(frozen=True)
+class TerrainConfig:
+    kind: str = "flat"
+    seed: int = 20260918
+
+
+@dataclass(frozen=True)
 class Sim2SimConfig:
     repository_root: Path
     paths: PathConfig
@@ -151,6 +157,7 @@ class Sim2SimConfig:
     base_body_name: str
     base_joint_name: str
     floor_geom_name: str
+    terrain: TerrainConfig = TerrainConfig()
 
 
 def _tuple_of_floats(value: object, length: int, name: str) -> tuple[float, ...]:
@@ -295,8 +302,13 @@ def load_config(path: str | Path, repository_root: str | Path | None = None) -> 
         base_body_name=str(robot["base_body_name"]),
         base_joint_name=str(robot["base_joint_name"]),
         floor_geom_name=str(robot["floor_geom_name"]),
+        terrain=TerrainConfig(**raw.get("terrain", {})),
     )
 
+    if cfg.terrain.kind not in ("flat", "three_level"):
+        raise ValueError("terrain.kind must be flat or three_level")
+    if not isinstance(cfg.terrain.seed, int) or cfg.terrain.seed < 0:
+        raise ValueError("terrain.seed must be a nonnegative integer")
     if cfg.simulation.timestep <= 0.0 or cfg.simulation.decimation <= 0:
         raise ValueError("仿真步长和 decimation 必须大于零")
     if cfg.simulation.integrator not in ("euler", "implicit", "implicitfast", "rk4"):
