@@ -102,7 +102,7 @@ class BpxStandRewardsCfg:
     )
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-1.0)
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-5.0)
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-10.0)
     base_height_l2 = RewTerm(func=mdp.base_height_l2, weight=-5.0, params={"target_height": 0.40})
 
     #  足端滑动奖励

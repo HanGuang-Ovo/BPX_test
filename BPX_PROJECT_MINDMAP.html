@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="BPX 四足机器人训练、策略导出、MuJoCo sim2sim 和 Supervisor 工程思维导图">
+  <meta name="description" content="BPX 四足机器人平地与复杂地形训练、策略导出、MuJoCo sim2sim 和 Supervisor 工程思维导图">
   <title>BPX 工程思维导图</title>
   <style>
     :root {
@@ -175,7 +175,7 @@
       gap: 48px;
       align-items: center;
       min-width: 1220px;
-      min-height: 1050px;
+      min-height: 1320px;
       padding: 48px 38px;
     }
 
@@ -425,18 +425,19 @@
       <div>
         <p class="eyebrow">BPX 四足机器人 · 工程架构</p>
         <h1>BPX 工程思维导图</h1>
-        <p>从 Isaac Lab 多策略训练，到模型导出，再到 MuJoCo 中由手柄、Supervisor 和底层策略组成的闭环控制。点击节点可以查看职责、数据关系和对应源码。</p>
+        <p>从 Isaac Lab 平地与复杂地形多策略训练，到模型导出，再到 MuJoCo 中由手柄、Supervisor 和底层策略组成的闭环控制。点击节点可以查看职责、数据关系和对应源码。</p>
       </div>
       <aside class="status-card" aria-label="当前代码与配置状态">
-        <strong>已同步当前代码 · <time datetime="2026-09-17">2026-09-17</time></strong>
-        <span>3 个训练任务 + 1 个兼容入口</span>
-        <span>TOML 已配置行走、站立和起身模型路径</span>
+        <strong>已同步当前代码 · <time datetime="2026-09-19">2026-09-19</time></strong>
+        <span>5 个独立训练任务 + 1 个兼容入口</span>
+        <span>新增 8 级复杂地形行走与站立课程</span>
+        <span>TOML 已配置 Rough 行走、Rough 站立和起身模型</span>
         <span>模型文件需另行准备；默认趴姿等待 RB 起身</span>
       </aside>
     </header>
 
     <section class="stats" aria-label="核心接口摘要">
-      <div class="stat"><b>3</b><span>独立训练任务</span></div>
+      <div class="stat"><b>5 + 1</b><span>训练任务 + 兼容入口</span></div>
       <div class="stat"><b>48</b><span>共同策略观测维度</span></div>
       <div class="stat"><b>12</b><span>共同关节动作维度</span></div>
       <div class="stat"><b>200 / 50 Hz</b><span>物理 / 策略频率</span></div>
@@ -460,11 +461,14 @@
           <article class="branch" style="--branch: var(--cyan)">
             <div class="children">
               <button class="node" id="base-env" data-parent="training" data-key="baseEnv" type="button"><strong>公共环境配置</strong><small>机器人 · 场景 · 关节顺序 · 观测/动作</small></button>
-              <button class="node" id="locomotion-env" data-parent="training" data-key="locomotionEnv" type="button"><strong>Locomotion 行走任务</strong><small>随机速度指令 · 步态 · 速度跟踪</small></button>
-              <button class="node" id="stand-env" data-parent="training" data-key="standEnv" type="button"><strong>Stand 站立任务</strong><small>零 command · 防滑 · 抑制抖动</small></button>
+              <button class="node" id="locomotion-env" data-parent="training" data-key="locomotionEnv" type="button"><strong>Locomotion 平地行走</strong><small>分层速度指令 · 步态 · 速度跟踪</small></button>
+              <button class="node" id="rough-locomotion-env" data-parent="training" data-key="roughLocomotionEnv" type="button"><strong>Rough 复杂地形行走</strong><small>8 级地形 · 可通过性课程 · 边界截断</small></button>
+              <button class="node" id="stand-env" data-parent="training" data-key="standEnv" type="button"><strong>Stand 平地站立</strong><small>零 command · 防滑 · 抑制抖动</small></button>
+              <button class="node" id="rough-stand-env" data-parent="training" data-key="roughStandEnv" type="button"><strong>Rough 复杂地形站立</strong><small>分层 reset · 四足接触 · 左右对称</small></button>
               <button class="node" id="init-env" data-parent="training" data-key="initEnv" type="button"><strong>Init 趴卧起身任务</strong><small>零指令 · 四足支撑 · 4 秒稳定保持</small></button>
-              <button class="node" id="mdp" data-parent="training" data-key="mdp" type="button"><strong>自定义 MDP 与课程</strong><small>分层指令 · 起身奖励 · 力矩约束课程</small></button>
-              <button class="node" id="gym-agents" data-parent="training" data-key="gymAgents" type="button"><strong>Gym 注册与 PPO 配置</strong><small>3 个任务 + 1 个兼容入口</small></button>
+              <button class="node" id="rough-terrain" data-parent="training" data-key="roughTerrain" type="button"><strong>复杂地形生成</strong><small>中央平台 · 8 级波形 · 4 个变体</small></button>
+              <button class="node" id="mdp" data-parent="training" data-key="mdp" type="button"><strong>自定义 MDP 与课程</strong><small>分层指令 · 可通过性 · 站稳与力矩课程</small></button>
+              <button class="node" id="gym-agents" data-parent="training" data-key="gymAgents" type="button"><strong>Gym 注册与 PPO 配置</strong><small>5 个任务 + 1 个兼容入口</small></button>
             </div>
             <button class="node branch-node" id="training" data-parent="root" data-key="training" type="button" aria-expanded="true"><strong>Isaac Lab 训练层</strong><small>定义“每个策略应该学什么”</small></button>
           </article>
@@ -600,24 +604,65 @@
     </section>
 
     <section class="section-card">
-      <div class="section-head"><h2>任务与训练配置</h2><p>默认 2048 个并行环境，PPO 网络为三层 128 单元、ELU 激活；可通过命令行覆盖环境数和迭代数。</p></div>
+      <div class="section-head"><h2>任务与训练配置</h2><p>默认 2048 个并行环境，PPO 网络为三层 128 单元、ELU 激活；Rough 任务保持 48 维观测与 12 维动作，可直接从对应平地 checkpoint 微调。</p></div>
       <div class="table-scroll"><table>
-        <thead><tr><th scope="col">任务</th><th scope="col">目标 / 指令</th><th scope="col">回合 / 迭代</th><th scope="col">日志目录（logs/rsl_rl/ 下）</th></tr></thead>
+        <thead><tr><th scope="col">任务</th><th scope="col">地形</th><th scope="col">目标 / 指令</th><th scope="col">回合 / 迭代</th><th scope="col">日志目录（logs/rsl_rl/ 下）</th></tr></thead>
         <tbody>
-          <tr><td><code>BPX-Locomotion-v0</code></td><td>10% 静止、25% 纯旋转、65% 混合运动</td><td>20 秒 / 1500</td><td><code>bpx_locomotion</code></td></tr>
-          <tr><td><code>BPX-Stand-v0</code></td><td>零指令稳定站立</td><td>15 秒 / 1500</td><td><code>bpx_stand</code></td></tr>
-          <tr><td><code>BPX-Init-v0</code></td><td>零指令趴卧起身与稳定保持</td><td>4 秒 / 3000</td><td><code>bpx_init</code></td></tr>
-          <tr><td><code>BPX-Test-v0</code></td><td>行走任务兼容入口</td><td>20 秒 / 1500</td><td><code>bpx_flat</code></td></tr>
+          <tr><td><code>BPX-Locomotion-v0</code></td><td>平面</td><td>10% 静止、25% 纯旋转、65% 混合运动</td><td>20 秒 / 1500</td><td><code>bpx_locomotion</code></td></tr>
+          <tr><td><code>BPX-Locomotion-Rough-v0</code></td><td>8 级波形</td><td>三轴均匀速度指令，通过性升降级</td><td>20 秒 / 1500</td><td><code>bpx_rough</code></td></tr>
+          <tr><td><code>BPX-Stand-v0</code></td><td>平面</td><td>零指令稳定站立</td><td>15 秒 / 1500</td><td><code>bpx_stand</code></td></tr>
+          <tr><td><code>BPX-Stand-Rough-v0</code></td><td>平地 + 8 级波形</td><td>四足、水平、左右对称站立</td><td>15 秒 / 1500</td><td><code>bpx_rough_stand</code></td></tr>
+          <tr><td><code>BPX-Init-v0</code></td><td>平面</td><td>零指令趴卧起身与稳定保持</td><td>4 秒 / 3000</td><td><code>bpx_init</code></td></tr>
+          <tr><td><code>BPX-Test-v0</code></td><td>平面</td><td>行走任务兼容入口</td><td>20 秒 / 1500</td><td><code>bpx_flat</code></td></tr>
         </tbody>
       </table></div>
-      <p>行走范围：vx ±1.0 m/s、vy ±0.5 m/s、wz ±1.0 rad/s。Init 的力矩惩罚课程在收集至少 4096 个回合后，根据最近最多 8192 个回合的成功率，将权重从 −0.1 逐渐调整为 −1.0；成功率区间为 70%～90%。</p>
+      <p>所有行走任务的满量程均为 vx ±1.0 m/s、vy ±0.5 m/s、wz ±1.0 rad/s。Rough 地形课程状态不写入 PPO checkpoint，恢复训练时从最低等级重新开始；模型与优化器仍可从平地 checkpoint 恢复。</p>
+    </section>
+
+    <section class="section-card">
+      <div class="section-head">
+        <h2>平地行走 → 复杂地形行走</h2>
+        <p>行走奖励与策略接口保持不变，主要通过地形、reset、指令分布与“真实通过地形”的课程判据增加能力。</p>
+      </div>
+      <div class="table-scroll"><table>
+        <thead><tr><th scope="col">维度</th><th scope="col">平地 Locomotion</th><th scope="col">Rough Locomotion</th><th scope="col">设计目的</th></tr></thead>
+        <tbody>
+          <tr><td>地形</td><td>无限平面</td><td>8×8 m 地块；中央 2×2 m 平台；0.5 m 过渡；8 级 ±0.5～±4 cm 波形</td><td>逐级增加连续起伏</td></tr>
+          <tr><td>Reset</td><td>x/y ±0.5 m；根速度各轴可达 ±0.5</td><td>平台中心 x/y ±0.1 m；根速度为零</td><td>先稳定出生，再主动进入崎岖区</td></tr>
+          <tr><td>指令</td><td>10% 静止、25% 纯旋转、65% 混合</td><td>vx/vy/wz 独立连续均匀采样</td><td>集中训练移动中的地形通过能力</td></tr>
+          <tr><td>奖励</td><td>速度跟踪、腾空时间、姿态、平滑、接触与能耗</td><td>完全继承，权重不变</td><td>将提升归因于课程与地形，而非奖励重写</td></tr>
+          <tr><td>课程</td><td>无地形课程</td><td>崎岖路程 ≥1 m、时间 ≥1 s、线速度误差 ≤0.35、角速度误差 ≤0.5；连续成功 2 次升级</td><td>只有真正通过地形且保持跟踪才升级</td></tr>
+          <tr><td>边界</td><td>近似无限</td><td>3.4 m 处 time-limit 截断并 bootstrap</td><td>避免进入相邻难度地块</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="section-card">
+      <div class="section-head">
+        <h2>平地站立 → 复杂地形站立</h2>
+        <p>Rough Stand 针对“倾斜三脚站立也能成功”的漏洞，增加分层 reset、策略切换状态、四足接触和左右对称课程。</p>
+      </div>
+      <div class="table-scroll"><table>
+        <thead><tr><th scope="col">维度</th><th scope="col">平地 Stand</th><th scope="col">Rough Stand</th><th scope="col">解决的问题</th></tr></thead>
+        <tbody>
+          <tr><td>地形 / 采样</td><td>100% 平面</td><td>25% 平地、50% 当前等级、25% 历史低等级回放</td><td>防止遗忘平地和低难度能力</td></tr>
+          <tr><td>Reset</td><td>统一站姿附近扰动</td><td>普通温和扰动；另有 25% 合成 handoff，扩大姿态、速度、关节及 previous action 分布</td><td>覆盖 Init→Stand 与 Walk→Stand</td></tr>
+          <tr><td>高度奖励</td><td>世界高度跟踪 0.40 m，权重 −5</td><td>相对附近平均地面高度跟踪 0.40 m，权重不变</td><td>避免凸起/低洼造成虚假高度误差</td></tr>
+          <tr><td>姿态奖励</td><td>水平姿态 −10</td><td>继承 −10</td><td>中小倾角也受到明确约束</td></tr>
+          <tr><td>新增奖励</td><td>无左右镜像项</td><td>镜像惩罚 −1.0；0.10 rad 死区</td><td>抑制长期偏向单侧，又允许地形补偿</td></tr>
+          <tr><td>课程成功</td><td>无升降级课程</td><td>稳定率 ≥90%、四足率 ≥90%、对称率 ≥80%、倾角 ≤0.10 rad、漂移 ≤0.20 m</td><td>拒绝三脚、倾斜或偏置的伪稳定姿态</td></tr>
+          <tr><td>升级 / 降级</td><td>不适用</td><td>当前等级连续成功 2 次升级；物理失败或完整回合指标不达标降级</td><td>难度与实际站稳质量绑定</td></tr>
+          <tr><td>地面查询</td><td>无需查询</td><td>约 13 MB 确定性高度场 + 三角面插值</td><td>替代 650 万三角形 Warp BVH，避免 CUDA OOM</td></tr>
+        </tbody>
+      </table></div>
+      <p>Rough Stand 的课程指标包括 <code>level</code>、<code>sampled_level</code>、<code>stable_fraction</code>、<code>four_feet_fraction</code>、<code>symmetry_fraction</code>、<code>symmetry_error</code> 和 <code>max_drift</code>。</p>
     </section>
 
     <section class="section-card">
       <div class="section-head"><h2>从训练到运行</h2><p>所有命令在项目根目录执行。完整参数与资产准备步骤见 <a href="README.md">中文 README</a>。</p></div>
       <div class="reading-grid">
         <div class="reading-item"><em>01 环境</em><b>准备训练依赖与 USD</b><span>项目基线为 Isaac Lab 2.2.1；扩展安装不会自动安装 Isaac Sim。USD 被 Git 忽略，需复制完整资产或从 URDF 转换。</span></div>
-        <div class="reading-item"><em>02 训练</em><b>三个任务分别训练</b><span>先用少量环境短训练检查流程，再训练各策略。用 TensorBoard 查看奖励、回合长度和课程指标。</span></div>
+        <div class="reading-item"><em>02 训练</em><b>平地预训练，Rough 微调</b><span>先训练或选择稳定的平地 checkpoint，再微调 Rough 行走与站立；用 TensorBoard 查看奖励、地形等级、接触率和对称率。</span></div>
         <div class="reading-item"><em>03 导出</em><b>play.py 自动导出</b><span>每个检查点目录下生成 exported/policy.pt 与 policy.onnx。MuJoCo 加载导出模型，不直接加载 model_*.pt。</span></div>
         <div class="reading-item"><em>04 部署</em><b>更新 TOML 模型路径</b><span>相对路径以项目根目录解析。日志与模型被 Git 忽略；默认路径不会自动选择新训练的模型。</span></div>
       </div>
@@ -626,8 +671,15 @@ python -m pip install -e source/BPX_test
 python scripts/list_envs.py
 python scripts/rsl_rl/train.py --task BPX-Locomotion-v0 --num_envs 64 --max_iterations 2 --headless
 
-# 回放并导出；实际使用时分别选择三个任务的目标检查点
-python scripts/rsl_rl/play.py --task BPX-Locomotion-v0 --num_envs 1 --real-time
+# 从平地策略微调复杂地形策略
+python scripts/rsl_rl/train.py --task BPX-Locomotion-Rough-v0 --num_envs 512 --headless \
+  --resume --checkpoint logs/rsl_rl/bpx_locomotion/&lt;run&gt;/model_&lt;n&gt;.pt
+python scripts/rsl_rl/train.py --task BPX-Stand-Rough-v0 --num_envs 512 --headless \
+  --resume --checkpoint logs/rsl_rl/bpx_stand/&lt;run&gt;/model_&lt;n&gt;.pt
+
+# 回放并导出；GUI 回放必须显式限制环境数
+python scripts/rsl_rl/play.py --task BPX-Stand-Rough-v0 --num_envs 1 \
+  --checkpoint logs/rsl_rl/bpx_rough_stand/&lt;run&gt;/model_&lt;n&gt;.pt --real-time
 
 # 独立 MuJoCo 环境（Python 3.11+）：安装与模型检查
 python -m pip install -r sim2sim/requirements.txt
@@ -646,7 +698,7 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
       </div>
       <div class="reading-grid">
         <div class="reading-item"><em>STEP 1</em><b>先理解公共接口</b><span>bpx_base_env_cfg.py：关节顺序、观测、动作和控制频率。</span></div>
-        <div class="reading-item"><em>STEP 2</em><b>再比较三个任务</b><span>观察 command、reset、reward、termination 有何不同。</span></div>
+        <div class="reading-item"><em>STEP 2</em><b>比较五个独立任务</b><span>先比较平地行走/站立，再看 Rough 版本如何改变地形、reset、reward 与 curriculum。</span></div>
         <div class="reading-item"><em>STEP 3</em><b>沿 sim2sim 闭环阅读</b><span>run_mujoco → runner → robot / policy。</span></div>
         <div class="reading-item"><em>STEP 4</em><b>最后理解行为切换</b><span>supervisor → behaviors → transition，并结合 CSV 验证。</span></div>
       </div>
@@ -660,7 +712,7 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
       root: {
         category: "PROJECT",
         title: "BPX_test 工程",
-        text: "同一个工程同时包含 Isaac Lab 训练侧、策略导出物、MuJoCo sim2sim 运行侧和 Supervisor 上层行为规划。核心原则是三个底层策略共享同一观测/动作契约。",
+        text: "同一个工程包含 Isaac Lab 平地与复杂地形训练、策略导出物、MuJoCo sim2sim 和 Supervisor。Init、Locomotion、Stand 三类底层行为共享同一观测/动作契约，Rough 版本在不改变接口的前提下扩展地形能力。",
         input: "BPX 机器人资产、各任务训练目标、速度指令与机器人状态",
         output: "locomotion / stand / Init 策略，以及 MuJoCo 闭环控制和诊断数据",
         files: [["README.md", "README.md"], ["sim2sim/BPX_SIM2SIM_WORKFLOW.md", "sim2sim/BPX_SIM2SIM_WORKFLOW.md"]]
@@ -668,7 +720,7 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
       training: {
         category: "ISAAC LAB",
         title: "Isaac Lab 训练层",
-        text: "ManagerBasedRLEnv 将机器人、观测、动作、指令、事件、奖励和终止条件组合成可并行训练的强化学习环境。公共部分通过继承复用，任务目标保持彼此独立。",
+        text: "ManagerBasedRLEnv 将机器人、观测、动作、指令、事件、奖励、课程和终止条件组合成并行环境。平地任务提供基础能力，Rough 行走和站立从对应平地 checkpoint 微调；课程状态不写入 PPO checkpoint。",
         input: "USD 机器人、任务配置、PPO 配置",
         output: "checkpoint model_x.pt、训练参数快照和 TensorBoard 指标",
         files: [["任务目录", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/"]]
@@ -678,7 +730,7 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
         title: "公共环境配置",
         text: "所有策略的共同源定义。这里固定 BPX 模型、默认姿态、12 关节顺序、48 维观测、12 维动作、场景、公共域随机化以及 200/50 Hz 时序。任务奖励不应放回这里。",
         input: "BPX USD 与 Isaac Lab MDP 基础组件",
-        output: "BpxBaseEnvCfg，供三个任务配置继承",
+        output: "BpxBaseEnvCfg，供五个独立任务及兼容入口继承",
         files: [["bpx_base_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"]]
       },
       setup: {
@@ -686,32 +738,56 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
         title: "环境与资产准备",
         text: "训练使用已安装 Isaac Lab、Isaac Sim 和 RSL-RL 的环境，再以 editable 方式安装 source/BPX_test。USD 文件被 Git 忽略，首次克隆需准备完整资产。MuJoCo 可使用独立 Python 3.11+ 环境，安装 sim2sim/requirements.txt；TorchScript 另需 torch。",
         input: "训练依赖、完整 USD 资产、MJCF 与网格",
-        output: "可列出四个 Gym 入口的训练环境，以及可运行 validate_setup.py 的推理环境",
+        output: "可列出六个 Gym 入口的训练环境，以及可运行 validate_setup.py 的推理环境",
         files: [["安装与运行说明", "README.md"], ["MuJoCo 依赖", "sim2sim/requirements.txt"], ["列出任务", "scripts/list_envs.py"], ["USD 转换配置", "source/BPX_test/BPX_test/BPX_structure/usd/config.yaml"]]
       },
       mdp: {
         category: "MDP · CURRICULUM",
         title: "自定义指令、奖励与课程",
-        text: "行走指令按 10% 静止、25% 纯旋转、65% 混合运动采样。Init 奖励覆盖高度、姿态、四足支撑、前足宽度和稳定保持；课程按回合结束时的 recovered 成功率调整力矩超限惩罚。至少 4096 回合、最近最多 8192 回合的窗口，70%～90% 成功率对应权重 −0.1～−1.0；成功率下降时约束也会减弱。",
-        input: "速度范围、机器人状态与回合结束时的成功判定",
-        output: "训练指令、奖励和动态力矩惩罚权重",
-        files: [["分层速度指令", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/velocity_commands.py"], ["奖励函数", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/rewards.py"], ["成功率课程", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/curriculums.py"]]
+        text: "平地行走使用静止/纯旋转/混合分层指令；Rough 行走按实际崎岖路程、暴露时间和速度误差升降级。Rough Stand 统计稳定、四足接触、左右对称和漂移，并把掌握等级与本次分层采样等级分离。Init 另有成功率驱动的力矩惩罚课程。",
+        input: "速度范围、机器人状态、接触力、地形等级和回合结束判定",
+        output: "任务指令、稠密奖励、通过性课程、站稳课程和动态力矩权重",
+        files: [["分层速度指令", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/velocity_commands.py"], ["奖励函数", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/rewards.py"], ["Rough 行走课程", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/rough_curriculum.py"], ["Rough 站立课程", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/rough_stand.py"], ["Init 课程", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/curriculums.py"]]
       },
       locomotionEnv: {
         category: "TASK · LOCOMOTION",
-        title: "Locomotion 行走任务",
+        title: "Locomotion 平地行走任务",
         text: "训练策略跟踪 vx、vy、wz，范围分别为 ±1.0 m/s、±0.5 m/s、±1.0 rad/s，每 10 秒重采样。指令包含静止、纯旋转和混合运动。奖励包含速度跟踪、足端腾空、姿态稳定、动作平滑和非法接触惩罚；回合 20 秒，默认 1500 次迭代。",
         input: "随机速度 command、直立附近重置、周期推力",
         output: "可根据速度指令行走的 locomotion policy",
         files: [["bpx_locomotion_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_locomotion_env_cfg.py"], ["PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/bpx_locomotion_ppo_cfg.py"]]
       },
+      roughLocomotionEnv: {
+        category: "TASK · ROUGH LOCOMOTION",
+        title: "Rough 复杂地形行走",
+        text: "保持平地行走的 48/12 接口和全部奖励权重，改为 8 级波形地形与三轴连续均匀指令。机器人从中央平台零速度出生；只有累计崎岖路程、暴露时间、速度跟踪和物理稳定同时达标，连续两回合后才升级。3.4 m 边界以 time-limit 截断并 bootstrap。",
+        input: "平地 locomotion checkpoint、连续速度指令、当前地形等级",
+        output: "可在 ±0.5～±4 cm 起伏上盲走的 rough locomotion policy",
+        files: [["Rough 行走配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_rough_env_cfg.py"], ["通过性课程", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/rough_curriculum.py"], ["训练说明", "ROUGH_TERRAIN_TRAINING.md"], ["验证脚本", "scripts/validate_rough_task.py"]]
+      },
       standEnv: {
         category: "TASK · STAND",
-        title: "Stand 静止站立任务",
-        text: "command 始终为零，目标是在主动平衡时减少小踏步。奖励抑制机身六维运动、足端滑动、关节速度和动作变化，同时保持约 0.40 m 高度与水平姿态；回合 15 秒，默认 1500 次迭代。",
+        title: "Stand 平地站立任务",
+        text: "command 始终为零，目标是在主动平衡时减少小踏步。当前水平姿态权重为 −10，高度权重为 −5；同时抑制机身运动、足端滑动、关节速度、动作变化和非足端接触。回合 15 秒。",
         input: "零速度 command、默认站姿附近随机扰动",
         output: "用于零指令平衡的 stand policy，效果需回放验证",
         files: [["bpx_stand_env_cfg.py", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_stand_env_cfg.py"], ["PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/bpx_stand_ppo_cfg.py"]]
+      },
+      roughStandEnv: {
+        category: "TASK · ROUGH STAND",
+        title: "Rough 复杂地形站立",
+        text: "继承平地 Stand 奖励，将高度改为相对附近地面，并增加带 0.10 rad 死区的左右镜像惩罚。Reset 由 25% 平地、50% 当前等级、25% 历史回放组成，另有 25% 合成 handoff 状态。成功要求稳定率与四足率 ≥90%、对称率 ≥80%、倾角 ≤0.10 rad、漂移 ≤0.20 m。",
+        input: "平地 stand checkpoint、分层地形、接触力与切换状态分布",
+        output: "适合平地/起伏地形和策略交接的 rough stand policy",
+        files: [["Rough Stand 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_rough_stand_env_cfg.py"], ["Reset 与课程", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/rough_stand.py"], ["对称奖励", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/mdp/rewards.py"], ["训练说明", "ROUGH_STAND_TRAINING.md"], ["验证脚本", "scripts/validate_rough_stand_task.py"]]
+      },
+      roughTerrain: {
+        category: "TERRAIN",
+        title: "复杂地形生成",
+        text: "每块 8×8 m，中央为 2×2 m 平台，外接 0.5 m 平滑过渡和随机波叠加区域。网格间距 2.5 cm，波长 15～30 cm，8 级幅度为 ±0.5～±4 cm，每级 4 个固定种子变体。策略不观察高度；Rough Stand 只在 reset 与相对高度奖励中查询确定性高度场。",
+        input: "固定 seed、难度、振幅和波长范围",
+        output: "Isaac Lab 分级碰撞网格与可复现地形原点",
+        files: [["地形几何", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/rough_terrain_geometry.py"], ["地形配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_rough_env_cfg.py"], ["MuJoCo 地形", "sim2sim/bpx_sim2sim/terrain.py"]]
       },
       initEnv: {
         category: "TASK · INIT",
@@ -724,7 +800,7 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
       gymAgents: {
         category: "REGISTRY + PPO",
         title: "Gym 注册与 PPO 配置",
-        text: "注册三个训练任务及 BPX-Test-v0 兼容入口，分别写入独立日志目录。PPO 默认 actor/critic 均为 [128,128,128] ELU，每环境采集 24 步，每 50 次迭代保存检查点；行走/站立默认 1500 次迭代，Init 为 3000 次。",
+        text: "注册平地行走、Rough 行走、平地站立、Rough 站立、Init 五个独立任务及 BPX-Test-v0 兼容入口。PPO 默认 actor/critic 均为 [128,128,128] ELU，每环境采集 24 步，每 50 次迭代保存检查点；Rough 网络尺寸与平地对应任务一致。",
         input: "环境配置类与 RSL-RL runner 配置类",
         output: "可被 train.py / play.py 按 task ID 加载的 Gym spec",
         files: [["任务注册", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/__init__.py"], ["公共 PPO 配置", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/agents/rsl_rl_ppo_cfg.py"], ["旧环境兼容层", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_test_env_cfg.py"]]
@@ -788,10 +864,10 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
       logs: {
         category: "ARTIFACTS",
         title: "logs/rsl_rl",
-        text: "按策略分为 bpx_locomotion、bpx_stand、bpx_init；兼容任务使用 bpx_flat。每次运行保存检查点、params 参数快照与训练指标，play.py 再生成 exported。logs/ 被 Git 忽略，不保证随仓库提供；TOML 的模型路径需指向实际导出文件。",
+        text: "日志按任务分为 bpx_locomotion、bpx_rough、bpx_stand、bpx_rough_stand、bpx_init；兼容入口使用 bpx_flat。每次运行保存 checkpoint、params 与 TensorBoard 指标，play.py 再生成 exported。logs/ 被 Git 忽略，TOML 必须显式指向实际导出文件。",
         input: "训练过程、checkpoint 保存和 play 导出",
         output: "可追溯、可比较、可恢复的实验记录",
-        files: [["日志与导出说明", "README.md"], ["模型路径配置", "sim2sim/config/bpx_flat.toml"], ["训练曲线说明", "RL_TRAINING_CURVES.md"]]
+        files: [["日志与导出说明", "README.md"], ["复杂地形模型路径", "sim2sim/config/bpx_terrain.toml"], ["训练曲线说明", "RL_TRAINING_CURVES.md"]]
       },
       simCore: {
         category: "MUJOCO",
@@ -804,10 +880,10 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
       simConfig: {
         category: "SIM2SIM · CONFIG",
         title: "集中配置与校验",
-        text: "TOML 集中保存模型路径、接口、PD、时序与状态机阈值；相对路径以项目根目录解析。默认从 0.133 m 趴姿启动。joint_position 是复位姿态，default_joint_position 是策略动作零点，不能混用。模型路径指向具体实验，不会自动跟随新训练结果。",
-        input: "bpx_flat.toml",
+        text: "TOML 集中保存模型路径、接口、PD、时序、地形和状态机阈值；相对路径以项目根目录解析。bpx_terrain.toml 当前从 0.133 m 趴姿启动并加载 Rough 行走/Rough Stand/Init。joint_position 是物理复位姿态，default_joint_position 是动作零点，不能混用。模型路径不会自动跟随新训练结果。",
+        input: "bpx_terrain.toml / bpx_terrain_standing.toml",
         output: "不可变的 Sim2SimConfig 对象",
-        files: [["bpx_flat.toml", "sim2sim/config/bpx_flat.toml"], ["config.py", "sim2sim/bpx_sim2sim/config.py"]]
+        files: [["复杂地形 Supervisor 配置", "sim2sim/config/bpx_terrain.toml"], ["站姿直测配置", "sim2sim/config/bpx_terrain_standing.toml"], ["config.py", "sim2sim/bpx_sim2sim/config.py"], ["terrain.py", "sim2sim/bpx_sim2sim/terrain.py"]]
       },
       robotAdapter: {
         category: "SIM2SIM · ROBOT",
@@ -855,7 +931,7 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
         text: "六种状态为 WAITING_INIT、INIT、STAND、WALK、STOPPING、DISABLED。低高度且近水平时等待 RB；起身完成需高度、倾角、速度与四足接触连续达标。侧翻/仰翻不进入 Init，起身倾角超限则中止。行走切换使用归一化指令活跃度、迟滞和持续时间。",
         input: "raw command + SupervisorState（含足端接触）+ dt + init_requested",
         output: "SupervisorDecision(mode, filtered command, reason)",
-        files: [["supervisor.py", "sim2sim/bpx_sim2sim/supervisor.py"], ["阈值配置", "sim2sim/config/bpx_flat.toml"]]
+        files: [["supervisor.py", "sim2sim/bpx_sim2sim/supervisor.py"], ["阈值配置", "sim2sim/config/bpx_terrain.toml"]]
       },
       behaviors: {
         category: "POLICY ROUTING",
@@ -879,7 +955,7 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
         text: "策略切换安全性和 sim2sim 正确性都依赖这份契约。任何观测顺序、关节顺序、动作语义或时序变化，都意味着旧 checkpoint 可能不再兼容。",
         input: "训练时 env.yaml 与公共环境源码",
         output: "训练、导出、MuJoCo 三端一致的张量含义",
-        files: [["公共环境", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["sim2sim TOML", "sim2sim/config/bpx_flat.toml"]]
+        files: [["公共环境", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["sim2sim TOML", "sim2sim/config/bpx_terrain.toml"]]
       },
       observation: {
         category: "CONTRACT · OBS",
@@ -911,21 +987,21 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
         text: "两端物理步长均为 0.005 s（200 Hz），decimation=4（策略 50 Hz），名义 Kp=40、Kd=1、力矩限制 30 Nm。Isaac Lab 使用隐式 PD，MuJoCo 默认显式 PD；训练还有增益随机化，参数相同不代表响应完全一致。",
         input: "环境与 TOML 控制参数",
         output: "对齐名义控制参数，并通过跨仿真轨迹检查实际差异",
-        files: [["训练时序", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["部署时序", "sim2sim/config/bpx_flat.toml"]]
+        files: [["训练时序", "source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_base_env_cfg.py"], ["部署时序", "sim2sim/config/bpx_terrain.toml"]]
       },
       validation: {
         category: "VALIDATION",
         title: "验证与知识沉淀",
-        text: "分层检查资产、接口、导出格式、单步输出和闭环轨迹，帮助判断问题来自模型、关节映射、坐标系、控制参数还是状态机切换。",
+        text: "分层检查资产、接口、导出格式、Rough 地形与课程、单步输出和闭环轨迹。Rough 验证覆盖几何、升降级、边界、分层 reset、handoff、四足接触、左右对称、最高级钳制和有限值物理步进。",
         input: "训练配置、导出策略、Isaac/MuJoCo 运行数据",
         output: "可重复的断言、误差指标和排查记录",
-        files: [["工作流", "sim2sim/BPX_SIM2SIM_WORKFLOW.md"]]
+        files: [["工作流", "sim2sim/BPX_SIM2SIM_WORKFLOW.md"], ["Rough 行走验证", "scripts/validate_rough_task.py"], ["Rough 站立验证", "scripts/validate_rough_stand_task.py"]]
       },
       setupCheck: {
         category: "VALIDATION · STATIC",
         title: "基础设置检查",
         text: "加载 MJCF，确认 12 个关节和 actuator 能按名称找到，检查默认姿态、观测维度、PD 参数和零动作计算中没有 NaN/Inf。",
-        input: "bpx.xml 与 bpx_flat.toml",
+        input: "bpx.xml 与 bpx_terrain.toml",
         output: "模型和接口是否具备运行前提",
         files: [["validate_setup.py", "sim2sim/validate_setup.py"]]
       },
@@ -948,10 +1024,10 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor --du
       testsDocs: {
         category: "TESTS + DOCS",
         title: "验证入口与说明文档",
-        text: "先运行 validate_setup.py 检查模型和 PD，再比较同一检查点的两种导出，最后对齐初始姿态和指令做轨迹比较。本机 sim2sim/tests/ 有回归测试，但 tests/ 被 Git 忽略，不保证随仓库提供；测试数量与通过状态应以实际执行结果为准。部分专题文档保留早期实验参数，当前源码和 params/ 优先。",
+        text: "训练侧先运行 validate_rough_task.py 与 validate_rough_stand_task.py，检查地形、课程和接口；部署侧再运行 validate_setup.py、导出一致性与轨迹对拍。部分专题文档可能保留早期参数，当前源码、TOML 和训练 params/ 优先。",
         input: "模型、配置、导出策略与实际运行记录",
         output: "分层验证结果与可追溯的工程说明",
-        files: [["项目说明", "README.md"], ["基础验证", "sim2sim/validate_setup.py"], ["工作流", "sim2sim/BPX_SIM2SIM_WORKFLOW.md"], ["关节指南", "sim2sim/JOINT_ORDER_MAPPING_GUIDE.md"]]
+        files: [["项目说明", "README.md"], ["Rough 行走说明", "ROUGH_TERRAIN_TRAINING.md"], ["Rough 站立说明", "ROUGH_STAND_TRAINING.md"], ["Rough 行走验证", "scripts/validate_rough_task.py"], ["Rough 站立验证", "scripts/validate_rough_stand_task.py"], ["基础验证", "sim2sim/validate_setup.py"], ["工作流", "sim2sim/BPX_SIM2SIM_WORKFLOW.md"]]
       }
     };
 

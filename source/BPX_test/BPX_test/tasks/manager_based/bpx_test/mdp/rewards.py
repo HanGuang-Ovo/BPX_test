@@ -60,6 +60,54 @@ def joint_pos_target_l2(env: ManagerBasedRLEnv, target: float, asset_cfg: SceneE
     return torch.sum(torch.square(joint_pos - target), dim=1)
 
 
+def _left_right_joint_pair_errors(asset: Articulation, joint_ids) -> torch.Tensor:
+    """Return mirrored pair errors for roll, pitch and knee joints."""
+    offsets = asset.data.joint_pos[:, joint_ids] - asset.data.default_joint_pos[:, joint_ids]
+    if offsets.shape[1] != 12:
+        raise ValueError("左右对称关节配置必须按策略顺序包含 12 个关节")
+    return torch.stack(
+        (
+            offsets[:, 0] + offsets[:, 1],
+            offsets[:, 2] + offsets[:, 3],
+            offsets[:, 4] - offsets[:, 5],
+            offsets[:, 6] - offsets[:, 7],
+            offsets[:, 8] - offsets[:, 9],
+            offsets[:, 10] - offsets[:, 11],
+        ),
+        dim=1,
+    )
+
+
+def left_right_joint_symmetry_error(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Return RMS error from the mirrored left/right standing posture.
+
+    The joint list must use policy order: four hip-roll joints, four hip-pitch
+    joints and four knees, with front-left/front-right/hind-left/hind-right in
+    each group. Hip-roll offsets have opposite signs under reflection; pitch and
+    knee offsets have equal signs.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    errors = _left_right_joint_pair_errors(asset, asset_cfg.joint_ids)
+    return torch.sqrt(torch.mean(torch.square(errors), dim=1))
+
+
+def left_right_joint_symmetry_l2(
+    env: ManagerBasedRLEnv,
+    tolerance: float,
+    asset_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Penalize mirrored joint-pair errors only after a rough-terrain deadband."""
+    if tolerance < 0.0:
+        raise ValueError("左右对称容差不能小于零")
+    asset: Articulation = env.scene[asset_cfg.name]
+    errors = _left_right_joint_pair_errors(asset, asset_cfg.joint_ids)
+    excess = torch.clamp(errors.abs() - tolerance, min=0.0)
+    return torch.mean(torch.square(excess), dim=1)
+
+
 def upright_orientation_exp(
     env: ManagerBasedRLEnv,
     std: float,
