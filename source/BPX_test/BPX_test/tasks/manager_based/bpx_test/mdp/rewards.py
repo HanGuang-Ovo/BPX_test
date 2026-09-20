@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+# 计算关节位置相对指定目标角的平方误差和。
 def joint_pos_target_l2(env: ManagerBasedRLEnv, target: float, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """惩罚关节位置偏离目标值(L2 平方误差和)。
 
@@ -60,11 +61,13 @@ def joint_pos_target_l2(env: ManagerBasedRLEnv, target: float, asset_cfg: SceneE
     return torch.sum(torch.square(joint_pos - target), dim=1)
 
 
+# 按策略关节顺序计算左右髋外展、髋俯仰和膝关节的镜像配对误差。
 def _left_right_joint_pair_errors(asset: Articulation, joint_ids) -> torch.Tensor:
-    """Return mirrored pair errors for roll, pitch and knee joints."""
+    """返回髋外展、髋俯仰和膝关节的左右镜像配对误差。"""
     offsets = asset.data.joint_pos[:, joint_ids] - asset.data.default_joint_pos[:, joint_ids]
     if offsets.shape[1] != 12:
         raise ValueError("左右对称关节配置必须按策略顺序包含 12 个关节")
+    # 髋外展在镜像姿态下左右偏移反号，因此相加；髋俯仰和膝关节左右同号，因此相减。
     return torch.stack(
         (
             offsets[:, 0] + offsets[:, 1],
@@ -78,29 +81,30 @@ def _left_right_joint_pair_errors(asset: Articulation, joint_ids) -> torch.Tenso
     )
 
 
+# 用六组左右关节镜像误差的均方根衡量整体站姿对称程度。
 def left_right_joint_symmetry_error(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
-    """Return RMS error from the mirrored left/right standing posture.
+    """返回左右镜像站姿的均方根误差。
 
-    The joint list must use policy order: four hip-roll joints, four hip-pitch
-    joints and four knees, with front-left/front-right/hind-left/hind-right in
-    each group. Hip-roll offsets have opposite signs under reflection; pitch and
-    knee offsets have equal signs.
+    关节列表必须使用策略顺序：先四个髋外展关节，再四个髋俯仰关节，最后四个膝关节；
+    每组内部均按左前、右前、左后、右后排列。镜像时髋外展偏移左右反号，髋俯仰和
+    膝关节偏移左右同号。
     """
     asset: Articulation = env.scene[asset_cfg.name]
     errors = _left_right_joint_pair_errors(asset, asset_cfg.joint_ids)
     return torch.sqrt(torch.mean(torch.square(errors), dim=1))
 
 
+# 对超过地形容差的左右关节镜像误差施加归一化平方惩罚。
 def left_right_joint_symmetry_l2(
     env: ManagerBasedRLEnv,
     tolerance: float,
     scale: float,
     asset_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
-    """Penalize normalized mirrored joint-pair errors after a terrain deadband."""
+    """对超过崎岖地形死区的镜像关节配对误差施加归一化平方惩罚。"""
     if tolerance < 0.0:
         raise ValueError("左右对称容差不能小于零")
     if scale <= 0.0:
@@ -111,29 +115,34 @@ def left_right_joint_symmetry_l2(
     return torch.mean(torch.square(excess / scale), dim=1)
 
 
+# 计算整机质心水平投影到四足几何中心的距离。
 def whole_body_com_support_error(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,
     feet_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
-    """Return the planar distance from the whole-body COM to the four-foot center."""
+    """返回整机质心水平投影到四足几何中心的距离。"""
     asset: Articulation = env.scene[asset_cfg.name]
     if len(feet_cfg.body_ids) != 4:
         raise ValueError("支撑中心配置必须包含四个足端")
 
+    # 读取各刚体质心的世界系水平坐标，并把默认质量首次缓存到仿真设备，避免逐步传输。
     body_com_xy = asset.data.body_com_pos_w[..., :2]
     masses = getattr(asset, "_bpx_default_mass_on_device", None)
     if masses is None or masses.device != body_com_xy.device or masses.dtype != body_com_xy.dtype:
         masses = asset.data.default_mass.to(device=body_com_xy.device, dtype=body_com_xy.dtype)
         asset._bpx_default_mass_on_device = masses
+    # 按刚体质量加权，得到整台机器人的整体质心水平坐标。
     whole_body_com_xy = torch.sum(body_com_xy * masses.unsqueeze(-1), dim=1)
     whole_body_com_xy /= masses.sum(dim=1, keepdim=True)
 
+    # 四足几何中心取四个足端世界系水平坐标的算术平均值。
     feet_xy = asset.data.body_pos_w[:, feet_cfg.body_ids, :2]
     support_center_xy = feet_xy.mean(dim=1)
     return torch.linalg.vector_norm(whole_body_com_xy - support_center_xy, dim=1)
 
 
+# 使用指数核奖励整机质心水平投影靠近四足几何中心。
 def whole_body_com_support_exp(
     env: ManagerBasedRLEnv,
     tolerance: float,
@@ -141,11 +150,10 @@ def whole_body_com_support_exp(
     asset_cfg: SceneEntityCfg,
     feet_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
-    """Reward placing the whole-body COM above the center of the four feet.
+    """奖励整机质心水平投影位于四足几何中心附近。
 
-    A small deadband preserves the posture freedom needed on rough terrain.  The
-    exponential kernel gives this geometric objective a useful reward scale even
-    when the position error is only a few centimeters.
+    小死区为崎岖地形上的必要姿态调整保留自由度。指数核让几厘米量级的位置误差
+    也能产生清晰、连续的奖励差异。
     """
     if tolerance < 0.0:
         raise ValueError("质心居中容差不能小于零")
@@ -156,6 +164,7 @@ def whole_body_com_support_exp(
     return torch.exp(-torch.square(excess / std))
 
 
+# 使用指数核奖励机身保持朝上姿态。
 def upright_orientation_exp(
     env: ManagerBasedRLEnv,
     std: float,
@@ -182,6 +191,7 @@ def upright_orientation_exp(
     return torch.exp(-torch.square(gravity_z_error) / std**2)
 
 
+# 分别惩罚超过不同前倾、后仰容许角度的机身俯仰。
 def asymmetric_pitch_band_l2(
     env: ManagerBasedRLEnv,
     maximum_backward_pitch: float,
@@ -213,6 +223,7 @@ def asymmetric_pitch_band_l2(
     return torch.square(backward_excess) + torch.square(forward_excess)
 
 
+# 使用指数核奖励机身高度接近目标高度。
 def base_height_exp(
     env: ManagerBasedRLEnv,
     target_height: float,
@@ -237,6 +248,7 @@ def base_height_exp(
     return torch.exp(-torch.square(height_error) / std**2)
 
 
+# 惩罚超过安全上限的机身向上速度。
 def base_upward_velocity_limit_l2(
     env: ManagerBasedRLEnv,
     maximum_velocity: float,
@@ -263,6 +275,7 @@ def base_upward_velocity_limit_l2(
     return torch.square(velocity_excess)
 
 
+# 惩罚超过软上限的关节施加力矩。
 def joint_torque_limit_l2(
     env: ManagerBasedRLEnv,
     maximum_torque: float,
@@ -289,6 +302,7 @@ def joint_torque_limit_l2(
     return torch.sum(torch.square(torque_excess), dim=1)
 
 
+# 按机身抬升进度逐步启用朝上姿态奖励。
 def upright_height_progress(
     env: ManagerBasedRLEnv,
     start_height: float,
@@ -336,6 +350,7 @@ def upright_height_progress(
     return height_progress * upright
 
 
+# 按机身抬升进度逐步奖励关节恢复默认站姿。
 def joint_posture_progress_exp(
     env: ManagerBasedRLEnv,
     start_height: float,
@@ -379,6 +394,7 @@ def joint_posture_progress_exp(
     return height_progress * posture
 
 
+# 计算左前足到右前足在机身坐标系中的有符号横向距离。
 def _front_feet_lateral_width(asset: Articulation, front_feet_cfg: SceneEntityCfg) -> torch.Tensor:
     """返回左前足到右前足的机体系有符号横向距离。
 
@@ -411,6 +427,7 @@ def _front_feet_lateral_width(asset: Articulation, front_feet_cfg: SceneEntityCf
     return left_position_b[:, 1] - right_position_b[:, 1]
 
 
+# 按机身抬升进度奖励左右前足保持足够横向间距。
 def front_feet_width_progress(
     env: ManagerBasedRLEnv,
     start_height: float,
@@ -453,6 +470,7 @@ def front_feet_width_progress(
     return height_progress * width_score
 
 
+# 按机身抬升进度奖励建立四足有效接触支撑。
 def feet_support_progress(
     env: ManagerBasedRLEnv,
     start_height: float,
@@ -495,6 +513,7 @@ def feet_support_progress(
     return height_progress * contact_fraction
 
 
+# 按机身抬升进度惩罚已接触地面的足端发生水平滑动。
 def feet_slide_progress(
     env: ManagerBasedRLEnv,
     start_height: float,
@@ -543,6 +562,7 @@ def feet_slide_progress(
     return height_progress * slide
 
 
+# 综合高度、姿态、四足接触和前足宽度判定是否完成起身。
 def recovered_posture_with_contact(
     env: ManagerBasedRLEnv,
     minimum_height: float,
@@ -589,6 +609,7 @@ def recovered_posture_with_contact(
     return torch.logical_and(torch.logical_and(recovered, all_feet_contact), front_width_valid).float()
 
 
+# 仅在完成四足起身后奖励低线速度和低角速度的稳定状态。
 def recovered_stability_with_contact(
     env: ManagerBasedRLEnv,
     minimum_height: float,
@@ -648,6 +669,7 @@ def recovered_stability_with_contact(
     return recovered / (1.0 + normalized_motion)
 
 
+# 跳过回合初始阶段后惩罚相邻策略动作的平方变化量。
 def action_rate_l2_after_time(env: ManagerBasedRLEnv, start_time_s: float) -> torch.Tensor:
     """跳过复位后的首次动作跳变，再惩罚相邻策略动作的变化率。
 
@@ -673,6 +695,7 @@ def action_rate_l2_after_time(env: ManagerBasedRLEnv, start_time_s: float) -> to
     return torch.sum(torch.square(action_delta), dim=1) * (elapsed_s >= start_time_s).float()
 
 
+# 根据机身高度和倾角判定机器人是否达到基本站立姿态。
 def recovered_posture(
     env: ManagerBasedRLEnv,
     minimum_height: float,
