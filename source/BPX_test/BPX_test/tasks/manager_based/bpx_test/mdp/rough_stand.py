@@ -5,7 +5,7 @@ from isaaclab.managers import ManagerTermBase
 from isaaclab.utils.math import quat_from_euler_xyz
 
 from ..rough_terrain_geometry import wave_height_field
-from .rewards import left_right_joint_symmetry_error
+from .rewards import left_right_joint_symmetry_error, whole_body_com_support_error
 
 
 def _ground_height_fields(env):
@@ -248,7 +248,8 @@ class StandStability(ManagerTermBase):
         self.handoff_action = torch.zeros((env.num_envs, env.action_manager.total_action_dim), device=env.device)
         for name in (
             'duration', 'stable_time', 'four_feet_time', 'symmetry_time',
-            'symmetry_error_sum', 'max_drift',
+            'symmetry_error_sum', 'support_center_time',
+            'support_center_error_sum', 'max_drift',
         ):
             setattr(self, name, torch.zeros(env.num_envs, device=env.device))
 
@@ -256,7 +257,8 @@ class StandStability(ManagerTermBase):
         ids = slice(None) if env_ids is None else env_ids
         for name in (
             'duration', 'stable_time', 'four_feet_time', 'symmetry_time',
-            'symmetry_error_sum', 'max_drift',
+            'symmetry_error_sum', 'support_center_time',
+            'support_center_error_sum', 'max_drift',
         ):
             getattr(self, name)[ids] = 0
 
@@ -264,6 +266,7 @@ class StandStability(ManagerTermBase):
         self, env, settling_time, max_speed, max_yaw_rate, max_tilt, max_drift,
         failure_drift, contact_force_threshold, sensor_cfg,
         symmetry_tolerance, symmetry_joint_cfg,
+        support_center_tolerance, support_feet_cfg,
     ):
         data = env.scene['robot'].data
         drift = torch.linalg.vector_norm(data.root_pos_w[:, :2] - self.spawn_xy, dim=1)
@@ -274,6 +277,10 @@ class StandStability(ManagerTermBase):
         all_feet_contact = (forces.norm(dim=-1).amax(dim=1) > contact_force_threshold).all(dim=1)
         symmetry_error = left_right_joint_symmetry_error(env, symmetry_joint_cfg)
         symmetric = symmetry_error <= symmetry_tolerance
+        support_center_error = whole_body_com_support_error(
+            env, support_feet_cfg, support_feet_cfg,
+        )
+        support_centered = all_feet_contact & (support_center_error <= support_center_tolerance)
         stable = ((torch.linalg.vector_norm(data.root_lin_vel_w[:, :2], dim=1) <= max_speed)
                   & (data.root_ang_vel_b[:, 2].abs() <= max_yaw_rate)
                   & (tilt <= max_tilt) & (drift <= max_drift))
@@ -282,6 +289,8 @@ class StandStability(ManagerTermBase):
         self.four_feet_time += (active & all_feet_contact).float() * env.step_dt
         self.symmetry_time += (active & symmetric).float() * env.step_dt
         self.symmetry_error_sum += active.float() * symmetry_error * env.step_dt
+        self.support_center_time += (active & support_centered).float() * env.step_dt
+        self.support_center_error_sum += active.float() * support_center_error * env.step_dt
         self.max_drift = torch.maximum(self.max_drift, drift)
         return drift > failure_drift
 
@@ -295,7 +304,8 @@ class StandingCurriculum(ManagerTermBase):
 
     def __call__(
         self, env, env_ids, min_duration, stable_fraction,
-        minimum_four_feet_fraction, minimum_symmetry_fraction, successes_to_promote,
+        minimum_four_feet_fraction, minimum_symmetry_fraction,
+        minimum_support_center_fraction, successes_to_promote,
     ):
         ids = torch.arange(env.num_envs, device=env.device)
         if env_ids is not None:
@@ -305,7 +315,9 @@ class StandingCurriculum(ManagerTermBase):
         result = {
             'level': self.mastery_level.float().mean(), 'sampled_level': 0.,
             'success_rate': 0., 'stable_fraction': 0., 'four_feet_fraction': 0.,
-            'symmetry_fraction': 0., 'symmetry_error': 0., 'max_drift': 0.,
+            'symmetry_fraction': 0., 'symmetry_error': 0.,
+            'support_center_fraction': 0., 'support_center_error': 0.,
+            'max_drift': 0.,
         }
         if not len(ids):
             return result
@@ -313,11 +325,19 @@ class StandingCurriculum(ManagerTermBase):
         four_feet_fraction = tracker.four_feet_time[ids] / tracker.duration[ids].clamp(min=env.step_dt)
         symmetry_fraction = tracker.symmetry_time[ids] / tracker.duration[ids].clamp(min=env.step_dt)
         symmetry_error = tracker.symmetry_error_sum[ids] / tracker.duration[ids].clamp(min=env.step_dt)
+        support_center_fraction = (
+            tracker.support_center_time[ids] / tracker.duration[ids].clamp(min=env.step_dt)
+        )
+        support_center_error = (
+            tracker.support_center_error_sum[ids] / tracker.duration[ids].clamp(min=env.step_dt)
+        )
         failed = env.termination_manager.terminated[ids]
         complete = tracker.duration[ids] >= min_duration
         success = (complete & (fraction >= stable_fraction)
                    & (four_feet_fraction >= minimum_four_feet_fraction)
-                   & (symmetry_fraction >= minimum_symmetry_fraction) & ~failed)
+                   & (symmetry_fraction >= minimum_symmetry_fraction)
+                   & (support_center_fraction >= minimum_support_center_fraction)
+                   & ~failed)
         adaptive = tracker.adaptive[ids]
         self.streak[ids] = torch.where(
             adaptive, torch.where(success, self.streak[ids] + 1, 0), self.streak[ids]
@@ -338,5 +358,7 @@ class StandingCurriculum(ManagerTermBase):
             'four_feet_fraction': four_feet_fraction.mean(),
             'symmetry_fraction': symmetry_fraction.mean(),
             'symmetry_error': symmetry_error.mean(),
+            'support_center_fraction': support_center_fraction.mean(),
+            'support_center_error': support_center_error.mean(),
             'max_drift': tracker.max_drift[ids].mean(),
         }

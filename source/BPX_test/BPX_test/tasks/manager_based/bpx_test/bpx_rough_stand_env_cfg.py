@@ -17,6 +17,9 @@ from .mdp.rough_stand import (
 )
 
 
+BPX_FOOT_NAMES = ["fl_toe_link", "fr_toe_link", "hl_toe_link", "hr_toe_link"]
+
+
 @configclass
 class RoughStandTerminationsCfg(BpxStandTerminationsCfg):
     stand_drift = DoneTerm(func=StandStability, params={
@@ -28,6 +31,10 @@ class RoughStandTerminationsCfg(BpxStandTerminationsCfg):
         'symmetry_joint_cfg': SceneEntityCfg(
             'robot', joint_names=BPX_POLICY_JOINT_NAMES, preserve_order=True,
         ),
+        'support_center_tolerance': .05,
+        'support_feet_cfg': SceneEntityCfg(
+            'robot', body_names=BPX_FOOT_NAMES, preserve_order=True,
+        ),
     })
 
 
@@ -38,8 +45,21 @@ class RoughStandRewardsCfg(BpxStandRewardsCfg):
         weight=-1.0,
         params={
             'tolerance': .10,
+            'scale': .20,
             'asset_cfg': SceneEntityCfg(
                 'robot', joint_names=BPX_POLICY_JOINT_NAMES, preserve_order=True,
+            ),
+        },
+    )
+    whole_body_com_support = RewTerm(
+        func=mdp.whole_body_com_support_exp,
+        weight=1.0,
+        params={
+            'tolerance': .02,
+            'std': .05,
+            'asset_cfg': SceneEntityCfg('robot'),
+            'feet_cfg': SceneEntityCfg(
+                'robot', body_names=BPX_FOOT_NAMES, preserve_order=True,
             ),
         },
     )
@@ -50,6 +70,7 @@ class RoughStandCurriculumCfg:
     terrain_levels = CurrTerm(func=StandingCurriculum, params={
         'min_duration': 14.4, 'stable_fraction': .90,
         'minimum_four_feet_fraction': .90, 'minimum_symmetry_fraction': .80,
+        'minimum_support_center_fraction': .80,
         'successes_to_promote': 2,
     })
 

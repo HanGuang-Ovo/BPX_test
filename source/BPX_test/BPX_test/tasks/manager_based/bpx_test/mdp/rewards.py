@@ -97,15 +97,63 @@ def left_right_joint_symmetry_error(
 def left_right_joint_symmetry_l2(
     env: ManagerBasedRLEnv,
     tolerance: float,
+    scale: float,
     asset_cfg: SceneEntityCfg,
 ) -> torch.Tensor:
-    """Penalize mirrored joint-pair errors only after a rough-terrain deadband."""
+    """Penalize normalized mirrored joint-pair errors after a terrain deadband."""
     if tolerance < 0.0:
         raise ValueError("左右对称容差不能小于零")
+    if scale <= 0.0:
+        raise ValueError("左右对称误差归一化尺度必须大于零")
     asset: Articulation = env.scene[asset_cfg.name]
     errors = _left_right_joint_pair_errors(asset, asset_cfg.joint_ids)
     excess = torch.clamp(errors.abs() - tolerance, min=0.0)
-    return torch.mean(torch.square(excess), dim=1)
+    return torch.mean(torch.square(excess / scale), dim=1)
+
+
+def whole_body_com_support_error(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    feet_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Return the planar distance from the whole-body COM to the four-foot center."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    if len(feet_cfg.body_ids) != 4:
+        raise ValueError("支撑中心配置必须包含四个足端")
+
+    body_com_xy = asset.data.body_com_pos_w[..., :2]
+    masses = getattr(asset, "_bpx_default_mass_on_device", None)
+    if masses is None or masses.device != body_com_xy.device or masses.dtype != body_com_xy.dtype:
+        masses = asset.data.default_mass.to(device=body_com_xy.device, dtype=body_com_xy.dtype)
+        asset._bpx_default_mass_on_device = masses
+    whole_body_com_xy = torch.sum(body_com_xy * masses.unsqueeze(-1), dim=1)
+    whole_body_com_xy /= masses.sum(dim=1, keepdim=True)
+
+    feet_xy = asset.data.body_pos_w[:, feet_cfg.body_ids, :2]
+    support_center_xy = feet_xy.mean(dim=1)
+    return torch.linalg.vector_norm(whole_body_com_xy - support_center_xy, dim=1)
+
+
+def whole_body_com_support_exp(
+    env: ManagerBasedRLEnv,
+    tolerance: float,
+    std: float,
+    asset_cfg: SceneEntityCfg,
+    feet_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Reward placing the whole-body COM above the center of the four feet.
+
+    A small deadband preserves the posture freedom needed on rough terrain.  The
+    exponential kernel gives this geometric objective a useful reward scale even
+    when the position error is only a few centimeters.
+    """
+    if tolerance < 0.0:
+        raise ValueError("质心居中容差不能小于零")
+    if std <= 0.0:
+        raise ValueError("质心居中奖励的 std 必须大于零")
+    error = whole_body_com_support_error(env, asset_cfg, feet_cfg)
+    excess = torch.clamp(error - tolerance, min=0.0)
+    return torch.exp(-torch.square(excess / std))
 
 
 def upright_orientation_exp(

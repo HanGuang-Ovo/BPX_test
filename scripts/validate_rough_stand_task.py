@@ -14,6 +14,7 @@ from BPX_test.tasks.manager_based.bpx_test.mdp.rough_stand import (
     ground_heights, relative_stand_height_l2, reset_rough_stand,
     reset_rough_stand_joints, rough_stand_last_action,
 )
+from BPX_test.tasks.manager_based.bpx_test.mdp.rewards import whole_body_com_support_error
 
 
 def main():
@@ -25,6 +26,7 @@ def main():
     assert cfg.commands.to_dict() == flat.commands.to_dict()
     rewards = cfg.rewards.to_dict()
     rewards.pop('left_right_joint_symmetry')
+    rewards.pop('whole_body_com_support')
     rewards['base_height_l2'] = flat.rewards.to_dict()['base_height_l2']
     assert rewards == flat.rewards.to_dict()
     assert flat.scene.terrain.terrain_type == 'plane'
@@ -46,6 +48,13 @@ def main():
         local = pos - env.scene.env_origins
         assert torch.all(local[:, 0].abs() == 2.5)
         heights = ground_heights(env, pos[:, :2])
+        support_cfg = env.reward_manager.get_term_cfg('whole_body_com_support')
+        support_error = whole_body_com_support_error(
+            env,
+            support_cfg.params['asset_cfg'],
+            support_cfg.params['feet_cfg'],
+        )
+        assert support_error.shape == (4,) and torch.isfinite(support_error).all()
         assert torch.all(heights.std(dim=1) > 0)
         torch.testing.assert_close(pos[:, 2], heights.amax(dim=1) + .42)
         torch.testing.assert_close(relative_stand_height_l2(env, .4), (pos[:, 2] - heights.mean(dim=1) - .4).square())
@@ -77,7 +86,7 @@ def main():
         )
 
         def finish(
-            stable=True, contact=True, symmetric=True, fallen=False,
+            stable=True, contact=True, symmetric=True, centered=True, fallen=False,
             adaptive=True, duration=14.5,
         ):
             env.episode_length_buf[:] = 750
@@ -86,12 +95,16 @@ def main():
             tracker.four_feet_time[:] = duration if contact else duration * .5
             tracker.symmetry_time[:] = duration if symmetric else duration * .5
             tracker.symmetry_error_sum[:] = duration * (.05 if symmetric else .30)
+            tracker.support_center_time[:] = duration if centered else duration * .5
+            tracker.support_center_error_sum[:] = duration * (.02 if centered else .10)
             tracker.rough[:] = adaptive
             tracker.adaptive[:] = adaptive
             env.termination_manager.terminated[:] = fallen
             env._reset_idx(ids)
             assert torch.all(tracker.duration == 0) and torch.all(tracker.four_feet_time == 0)
             assert torch.all(tracker.symmetry_time == 0) and torch.all(tracker.symmetry_error_sum == 0)
+            assert torch.all(tracker.support_center_time == 0)
+            assert torch.all(tracker.support_center_error_sum == 0)
         finish()
         assert torch.all(curriculum.mastery_level == 0)
         finish()
@@ -118,6 +131,11 @@ def main():
         assert torch.all(curriculum.mastery_level == 1)
         finish(symmetric=False)
         assert torch.all(curriculum.mastery_level == 0)
+        finish()
+        finish()
+        assert torch.all(curriculum.mastery_level == 1)
+        finish(centered=False)
+        assert torch.all(curriculum.mastery_level == 0)
         curriculum.mastery_level[:] = 7
         finish()
         finish()
@@ -126,15 +144,16 @@ def main():
         state[:, :2] = tracker.spawn_xy + torch.tensor([.7, 0.], device=env.device)
         env.scene['robot'].write_root_state_to_sim(state, env_ids=ids)
         env.scene.update(env.step_dt)
-        done = tracker(env, **cfg.terminations.stand_drift.params)
+        stand_drift_cfg = env.termination_manager.get_term_cfg('stand_drift')
+        done = tracker(env, **stand_drift_cfg.params)
         assert torch.all(done)
         env.reset()
         for _ in range(10):
             obs, reward, _, _, _ = env.step(torch.zeros((4, 12), device=env.device))
             assert torch.isfinite(obs['policy']).all() and torch.isfinite(reward).all()
         print(
-            'PASS: 48-D interface, stratified/handoff reset, four-foot and symmetry '
-            'curriculum, relative height, drift failure, physics steps',
+            'PASS: 48-D interface, stratified/handoff reset, four-foot, symmetry and '
+            'support-center curriculum, relative height, drift failure, physics steps',
             flush=True,
         )
     finally:
