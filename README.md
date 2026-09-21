@@ -60,6 +60,13 @@ BPX_test/
 
 以下命令均在项目根目录执行。训练和回放使用已安装 Isaac Lab、Isaac Sim 及 RSL-RL 的 Python 环境；MuJoCo 推理可以使用独立环境。
 
+新机器（或新建环境）安装完成后，可先运行依赖自检脚本定位缺失项，再按下列小节补齐：
+
+```bash
+python scripts/check_dependencies.py                # 检查训练环境（默认）
+python scripts/check_dependencies.py --mode sim2sim # 检查 MuJoCo 推理环境
+```
+
 ### 安装训练扩展
 
 将本项目放在 Isaac Lab 安装目录之外，并在 Isaac Lab 对应环境中执行：
