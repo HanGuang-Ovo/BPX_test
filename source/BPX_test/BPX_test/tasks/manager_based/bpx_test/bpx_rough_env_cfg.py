@@ -1,5 +1,9 @@
-"""Blind rough locomotion: unchanged flat rewards, 48-D single-frame observations."""
+"""Blind rough locomotion: rewards written out explicitly, 48-D single-frame observations."""
+import math
+
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
+from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.terrains import SubTerrainBaseCfg, TerrainGeneratorCfg
 from isaaclab.utils import configclass
@@ -11,6 +15,7 @@ from .rough_terrain_geometry import wave_terrain
 
 
 @configclass
+# 波浪地形配置
 class BpxWaveTerrainCfg(SubTerrainBaseCfg):
     function = wave_terrain
     horizontal_scale: float = 0.025
@@ -22,6 +27,7 @@ class BpxWaveTerrainCfg(SubTerrainBaseCfg):
 
 
 @configclass
+# 三维速度指令观测
 class BpxRoughCommandsCfg:
     # Each component independently uniform. No standing or pure-rotation mixture.
     base_velocity = mdp.UniformVelocityCommandCfg(
@@ -33,7 +39,95 @@ class BpxRoughCommandsCfg:
     )
 
 
+# [ ] 现在的崎岖地形行走只保留了一帧的观测，后续可以考虑增加历史帧的观测（直接将历史信息作为观测输入；将历史信息进行编码后输入）
+
 @configclass
+# 崎岖行走奖励：显式写出（不继承平地行走），当前数值与平地一致，保持策略契约不变，
+# 之后可独立调整崎岖任务的奖励权重或增删奖励项。
+class BpxRoughRewardsCfg:
+    # x,y方向的线速度跟踪奖励，，
+    track_lin_vel_xy_exp = RewTerm(
+        func=mdp.track_lin_vel_xy_exp,
+        weight=1.0,
+        params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
+    )
+
+    # z方向的角速度惩罚
+    track_ang_vel_z_exp = RewTerm(
+        func=mdp.track_ang_vel_z_exp,
+        weight=0.5,
+        params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
+    )
+
+    # 足端腾空时间奖励，鼓励足端腾空时间长一些，避免贴地滑行
+    feet_air_time = RewTerm(
+        func=mdp.feet_air_time,
+        weight=0.5,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_toe_link"),
+            "command_name": "base_velocity",
+            "threshold": 0.4,
+        },
+    )
+
+    # z方向的线速度惩罚
+    lin_vel_z_l2 = RewTerm(
+        func=mdp.lin_vel_z_l2, 
+        weight=-2.0
+    )
+
+    # x,y方向的角速度惩罚
+    ang_vel_xy_l2 = RewTerm(
+        func=mdp.ang_vel_xy_l2, 
+        weight=-0.05
+    )
+
+    # 机器人姿态平整度惩罚
+    flat_orientation_l2 = RewTerm(
+        func=mdp.flat_orientation_l2, 
+        weight=-0.5
+    )
+
+    # 关节力矩惩罚
+    dof_torques_l2 = RewTerm(
+        func=mdp.joint_torques_l2, 
+        weight=-1.0e-5
+    )
+
+    # 关节加速度惩罚
+    dof_acc_l2 = RewTerm(
+        func=mdp.joint_acc_l2, 
+        weight=-2.5e-7
+    )
+
+    # 动作变化率惩罚
+    action_rate_l2 = RewTerm(
+        func=mdp.action_rate_l2, 
+        weight=-0.01
+    )
+
+    # 关节偏离目标位置惩罚
+    joint_deviation_l1 = RewTerm(
+        func=mdp.joint_deviation_l1, 
+        weight=-0.05
+        )
+
+    # 不期望的接触惩罚
+    undesired_contacts = RewTerm(
+        func=mdp.undesired_contacts,
+        weight=-1.0,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["torso", ".*_hip_link", ".*_thigh_link", ".*_calf_link"],
+            ),
+            "threshold": 1.0,
+        },
+    )
+
+
+@configclass
+# 终止条件配置
 class BpxRoughTerminationsCfg(BpxLocomotionTerminationsCfg):
     # Time-limit truncation (value bootstrap), not an extra failure penalty.
     terrain_boundary = DoneTerm(
@@ -43,6 +137,7 @@ class BpxRoughTerminationsCfg(BpxLocomotionTerminationsCfg):
 
 
 @configclass
+# 课程配置
 class BpxRoughCurriculumCfg:
     terrain_levels = CurrTerm(
         func=TraversabilityCurriculum,
@@ -53,8 +148,10 @@ class BpxRoughCurriculumCfg:
 
 
 @configclass
+# 盲人粗糙地形环境配置
 class BpxRoughEnvCfg(BpxLocomotionEnvCfg):
     commands: BpxRoughCommandsCfg = BpxRoughCommandsCfg()
+    rewards: BpxRoughRewardsCfg = BpxRoughRewardsCfg()
     terminations: BpxRoughTerminationsCfg = BpxRoughTerminationsCfg()
     curriculum: BpxRoughCurriculumCfg = BpxRoughCurriculumCfg()
 
