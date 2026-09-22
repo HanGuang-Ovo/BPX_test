@@ -51,6 +51,7 @@ BPX_test/
 │   ├── config/bpx_flat.toml         # 平地、趴姿起身流程
 │   ├── config/bpx_terrain.toml      # 三级地形、趴姿起身流程
 │   ├── config/bpx_terrain_standing.toml # 三级地形、站姿直接测试
+│   ├── config/bpx_terrain_history.toml # 三级地形、H=10 历史观测趴姿起步
 │   ├── bpx_sim2sim/                # MuJoCo 运行器、策略与手柄接口
 │   ├── run_mujoco.py               # 跨仿真运行入口
 │   ├── validate_setup.py           # 模型、关节映射与 PD 检查
@@ -79,7 +80,7 @@ python -m pip install -e source/BPX_test
 python scripts/list_envs.py
 ```
 
-`list_envs.py` 应列出上表中的六个任务。项目安装脚本不会自动安装完整的 Isaac Lab / Isaac Sim 运行环境；若使用 Isaac Lab 自带的启动脚本，可将命令中的 `python` 替换为 `/path/to/IsaacLab/isaaclab.sh -p`。
+`list_envs.py` 应列出上表中的七个任务。项目安装脚本不会自动安装完整的 Isaac Lab / Isaac Sim 运行环境；若使用 Isaac Lab 自带的启动脚本，可将命令中的 `python` 替换为 `/path/to/IsaacLab/isaaclab.sh -p`。
 
 **首次克隆后请检查机器人资产。** 训练需要 `source/BPX_test/BPX_test/BPX_structure/usd/bpx.usd` 及其引用的 USD 文件。仓库的 `.gitignore` 忽略了 USD 文件，因此仅克隆代码可能缺少这些资产。需要复制完整 USD 资产，或使用 Isaac Lab 的 URDF 转换工具，参照 [转换配置](source/BPX_test/BPX_test/BPX_structure/usd/config.yaml) 从 `BPX_structure/bpx/urdf/bpx.urdf` 重新生成；保留足端固定关节对应的独立刚体，并保持转换参数与训练配置一致。
 
@@ -161,6 +162,10 @@ python scripts/rsl_rl/train.py \
     --task BPX-Stand-Rough-v0 --num_envs 512 --headless --resume \
     --checkpoint logs/rsl_rl/bpx_stand/2026-09-15_00-13-24_stable/model_499.pt \
     --max_iterations 1500
+
+# H=10 历史观测崎岖行走（从头训练，不能 resume 48 维检查点）
+python scripts/rsl_rl/train.py \
+    --task BPX-Locomotion-Rough-History-v0 --num_envs 2048 --headless
 ```
 
 `--resume --checkpoint` 加载训练状态，不是导出模型。`--max_iterations` 表示本次继续训练的迭代数；新日志分别写入 `bpx_rough` 和 `bpx_rough_stand`。PPO 检查点不保存地形课程状态，恢复训练后课程从最低级开始。
@@ -219,13 +224,14 @@ python scripts/rsl_rl/play.py \
 
 ### 配置模型路径
 
-根据运行流程选择配置；三个 TOML 相互独立，不会继承或同步策略路径：
+根据运行流程选择配置；四个 TOML 相互独立，不会继承或同步策略路径：
 
 | 配置 | 地形 / 初始姿态 | 用途 |
 | --- | --- | --- |
 | [bpx_flat.toml](sim2sim/config/bpx_flat.toml) | 平地 / 趴姿 | 平地手柄起身与多策略测试 |
 | [bpx_terrain.toml](sim2sim/config/bpx_terrain.toml) | 三级起伏地形 / 趴姿 | 手柄 RB 起身、崎岖行走与站立切换 |
 | [bpx_terrain_standing.toml](sim2sim/config/bpx_terrain_standing.toml) | 三级起伏地形 / 站姿 | 直接测试行走策略；文件名中的 standing 指初始姿态 |
+| [bpx_terrain_history.toml](sim2sim/config/bpx_terrain_history.toml) | 三级起伏地形 / 趴姿 | H=10 历史观测行走策略验证，配合 `--supervisor --auto-init` 无手柄起身 |
 
 编辑实际传给 `--config` 的文件的 `[paths]`，将 `locomotion_policy`、`stand_policy`、`init_policy` 指向各自导出的 `policy.onnx`；使用 TorchScript 时同时更新 `torchscript_policy`。
 
@@ -300,7 +306,7 @@ python sim2sim/run_mujoco.py \
     --duration 10 --no-realtime --log sim2sim/logs/forward.csv
 ```
 
-需要窗口时加 `--viewer`；需要按墙钟时间播放时去掉 `--no-realtime`。仅添加 `--supervisor` 不会自动触发趴姿起身，当前命令行流程通过手柄 RB 发送起身请求。
+需要窗口时加 `--viewer`；需要按墙钟时间播放时去掉 `--no-realtime`。仅添加 `--supervisor` 不会自动触发趴姿起身：手柄流程按 RB 发起，无手柄的自动化流程可加 `--auto-init`，摔倒回到趴姿后会再次自动起身。
 
 若要比较 ONNX 与 TorchScript 导出结果，先确认配置中的两个模型来自**同一个检查点**，再执行：
 
@@ -316,7 +322,7 @@ python sim2sim/validate_policy_export.py --samples 100
 | --- | --- |
 | 物理步长 / 频率 | `0.005 s` / 200 Hz |
 | 策略执行频率 | 每 4 个物理步更新一次，即 50 Hz |
-| 观测 / 动作维度 | 48 / 12 |
+| 观测 / 动作维度 | 48 / 12（H=10 历史任务为 480 / 12） |
 | 动作含义 | `目标关节角 = 默认关节角 + 0.5 × action` |
 | 默认关节角 | 髋横滚 `0.0`、髋俯仰 `0.7`、膝关节 `-1.4` rad |
 | 名义 PD 增益 | `Kp = 40`、`Kd = 1` |
@@ -330,6 +336,8 @@ python sim2sim/validate_policy_export.py --samples 100
 + 相对默认姿态的关节角(12) + 相对关节速度(12) + 上一步动作(12)
 ```
 
+历史任务将每个观测项按"最旧到最新"各自堆叠 10 帧后再拼接（按项分块，不是 10 个完整 48 维帧的直接相连），得到 480 维输入；完整布局与部署侧的历史缓存契约见 [H=10 使用说明](ROUGH_HISTORY_TRAINING.md)。
+
 关节按“类型优先”排列：先四个髋横滚，再四个髋俯仰，最后四个膝关节；每组内部均为 `fl → fr → hl → hr`（左前、右前、左后、右后）。不要直接用 MJCF 中的关节存储顺序替代策略顺序，详见 [关节顺序映射说明](sim2sim/JOINT_ORDER_MAPPING_GUIDE.md)。
 
 训练使用观测噪声、摩擦和执行器增益随机化；MuJoCo 推理使用无附加噪声的观测。Isaac Lab 使用隐式 PD 执行器，MuJoCo 默认逐物理步执行显式 PD，因此参数一致仍需进行跨仿真验证。MuJoCo 的 `joint_position` 决定复位姿态，`default_joint_position` 决定策略动作零点，两者含义不同。
@@ -342,7 +350,7 @@ python sim2sim/validate_policy_export.py --samples 100
 | 找不到 `bpx.usd` 或引用资产 | 检查完整 USD 资产是否已复制或转换生成；USD 文件被 Git 忽略 |
 | 训练显存不足 | 降低 `--num_envs`，并使用 `--headless` |
 | MuJoCo 找不到策略文件 | 更新 TOML 的 `[paths]`，检查是否已通过 `play.py` 导出模型 |
-| 趴姿一直等待、不起身 | 检查 Init 模型是否加载，并在 Supervisor 手柄流程中按下 RB |
+| 趴姿一直等待、不起身 | 检查 Init 模型是否加载；手柄流程按下 RB，无手柄流程加 `--auto-init` |
 | ONNX / TorchScript 对比失败 | 先确认两份导出来自同一检查点；默认配置可能指向不同实验 |
 | 编辑器无法解析 Isaac Sim 模块 | 在 VS Code 中运行 `setup_python_env` 任务，按提示填写 Isaac Sim 安装路径 |
 
@@ -358,6 +366,7 @@ pre-commit run --all-files
 ```
 
 - [崎岖行走课程与微调](ROUGH_TERRAIN_TRAINING.md)
+- [H=10 历史观测使用说明](ROUGH_HISTORY_TRAINING.md)
 - [崎岖站立课程与微调](ROUGH_STAND_TRAINING.md)
 - [训练—导出—MuJoCo 工作流](sim2sim/BPX_SIM2SIM_WORKFLOW.md)
 - [MuJoCo 运行器与手柄使用说明](sim2sim/README.md)
