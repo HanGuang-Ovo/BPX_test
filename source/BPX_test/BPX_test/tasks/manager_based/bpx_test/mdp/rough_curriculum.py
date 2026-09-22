@@ -46,19 +46,24 @@ class RoughTraversalBoundary(ManagerTermBase):
 
 
 class TraversabilityCurriculum(ManagerTermBase):
-    """Two consecutive traversable episodes promote; physical failure demotes.
+    """Two consecutive traversable episodes promote; consecutive failures demote.
 
     A low-speed/turning episode that never reaches rough ground cannot promote,
-    but is not demoted solely for low displacement. Highest-level success stays
+    but is not demoted solely for low displacement. Demotion needs failures_to_demote
+    consecutive bad episodes (physical failure, or enough duration with poor
+    tracking), so a single unlucky fall no longer bounces the env down a level;
+    any non-bad episode clears the failure streak. Highest-level success stays
     at the highest level (unlike the standard random wrap-around).
     """
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
         self.success_streak = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+        self.failure_streak = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
 
     def __call__(self, env, env_ids, min_rough_distance: float, min_rough_time: float,
-                 max_linear_error: float, max_angular_error: float, successes_to_promote: int):
+                 max_linear_error: float, max_angular_error: float, successes_to_promote: int,
+                 failures_to_demote: int = 1):
         if env_ids is None or isinstance(env_ids, slice):
             ids = torch.arange(env.num_envs, device=env.device)[slice(None) if env_ids is None else env_ids]
         else:
@@ -76,13 +81,17 @@ class TraversabilityCurriculum(ManagerTermBase):
         exposed = ((tracker.rough_time[ids] >= min_rough_time)
                    & (tracker.rough_distance[ids] >= min_rough_distance))
         success = exposed & tracking_ok & ~failed
+        # A bad episode is a physical failure, or enough duration with poor tracking.
+        bad_episode = failed | ((duration >= min_rough_time) & ~tracking_ok)
         self.success_streak[ids] = torch.where(success, self.success_streak[ids] + 1, 0)
+        self.failure_streak[ids] = torch.where(bad_episode, self.failure_streak[ids] + 1, 0)
         promote = self.success_streak[ids] >= successes_to_promote
+        demote = self.failure_streak[ids] >= failures_to_demote
         # Clamp the top level before TerrainImporter can randomly wrap it around.
         move_up = promote & (terrain.terrain_levels[ids] < terrain.max_terrain_level - 1)
-        move_down = failed | ((duration >= min_rough_time) & ~tracking_ok)
-        terrain.update_env_origins(ids, move_up, move_down)
-        self.success_streak[ids[promote | move_down]] = 0
+        terrain.update_env_origins(ids, move_up, demote)
+        self.success_streak[ids[promote | demote]] = 0
+        self.failure_streak[ids[promote | demote]] = 0
         return {"level": terrain.terrain_levels.float().mean(),
                 "success_rate": success.float().mean(),
                 "rough_distance": tracker.rough_distance[ids].mean(),

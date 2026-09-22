@@ -194,9 +194,9 @@ class BpxMujocoRobot:
                 np.asarray(last_action, dtype=np.float64),
             )
         ).astype(np.float32)
-        if observation.shape != (self.config.observation.dimension,):
+        if observation.shape != (self.config.observation.frame_dimension,):
             raise RuntimeError(
-                f"观测维度不匹配：期望 {self.config.observation.dimension}，实际 {observation.shape}"
+                f"单帧观测维度不匹配：期望 {self.config.observation.frame_dimension}，实际 {observation.shape}"
             )
         if not np.all(np.isfinite(observation)):
             raise FloatingPointError("观测中出现 NaN 或 Inf")

@@ -261,3 +261,8 @@ python -m unittest discover -s sim2sim -p 'test_terrain.py' -v
 地形幅度在 `bpx_sim2sim/terrain.py` 的 `MILD_AMPLITUDE` 和 `MODERATE_AMPLITUDE` 中设置（单位 m）。
 高度场缩放、Z 偏移、归一化和标签从这两个值自动计算。当前 ±4 cm 对应竖直缩放 0.08 m、
 Z 偏移 -0.04 m；不会通过截断高度数据削平峰谷。上述早期行走结果不能代表当前难度表现。
+
+## H=10 历史策略
+
+独立崎岖历史策略使用 `config/bpx_terrain_history.toml`（480 维输入、H=10）。
+训练、导出及历史排列契约见 [历史任务说明](../ROUGH_HISTORY_TRAINING.md)。原配置默认 H=1。

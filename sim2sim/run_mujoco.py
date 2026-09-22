@@ -69,6 +69,11 @@ def parse_args() -> argparse.Namespace:
         help="启用 WAITING_INIT/INIT/STAND/WALK/STOPPING/DISABLED 上层状态机",
     )
     parser.add_argument(
+        "--auto-init",
+        action="store_true",
+        help="无手柄时自动触发 Init 起身（需配合 --supervisor；摔倒回到趴姿会再次自动起身）",
+    )
+    parser.add_argument(
         "--stand-policy",
         type=Path,
         help="覆盖 TOML 中的站立 ONNX 策略路径（同为 48 输入、12 输出）",
@@ -180,13 +185,13 @@ def main() -> int:
         stand_policy = load_optional_policy(
             "stand",
             stand_path,
-            config.observation.dimension,
+            config.observation.frame_dimension,
             config.observation.action_dimension,
         )
         init_policy = load_optional_policy(
             "init",
             init_path,
-            config.observation.dimension,
+            config.observation.frame_dimension,
             config.observation.action_dimension,
         )
     # init_available 必须反映真实模型是否加载；否则未站立时会路由到空策略。
@@ -249,7 +254,9 @@ def main() -> int:
                 command=command,
                 command_source=gamepad.read if gamepad is not None else None,
                 init_request_source=(
-                    gamepad.consume_init_request if gamepad is not None and use_supervisor else None
+                    gamepad.consume_init_request if gamepad is not None and use_supervisor
+                    else (lambda: True) if args.auto_init and use_supervisor
+                    else None
                 ),
                 duration=args.duration,
                 viewer=args.viewer,

@@ -53,6 +53,12 @@ _register_bpx_task(
 )
 
 _register_bpx_task(
+    "BPX-Locomotion-Rough-History-v0",
+    "bpx_rough_history_env_cfg:BpxRoughHistoryEnvCfg",
+    "bpx_rough_history_ppo_cfg:BpxRoughHistoryPPORunnerCfg",
+)
+
+_register_bpx_task(
     "BPX-Stand-Rough-v0",
     "bpx_rough_stand_env_cfg:BpxRoughStandEnvCfg",
     "bpx_rough_stand_ppo_cfg:BpxRoughStandPPORunnerCfg",

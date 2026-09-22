@@ -26,6 +26,7 @@ import numpy.typing as npt
 from .config import Sim2SimConfig
 from .behaviors import BehaviorPolicies
 from .policy import ConstantPolicy, Policy
+from .history import ObservationHistory
 from .robot import BpxMujocoRobot
 from .supervisor import BehaviorMode, BehaviorSupervisor, SupervisorState
 from .transition import ActionBlender
@@ -224,6 +225,7 @@ class Sim2SimRunner:
         run_duration = self.config.simulation.duration if duration is None else duration
         use_realtime = self.config.simulation.realtime if realtime is None else realtime
         self.robot.reset()
+        history = ObservationHistory(self.config.observation.history_length, len(self.config.joint_names))
         if self.supervisor is None:
             action = np.zeros(self.config.observation.action_dimension, dtype=np.float32)
         else:
@@ -308,6 +310,11 @@ class Sim2SimRunner:
                     )
                     if active_policy is None:
                         raise RuntimeError("没有可执行的 behavior policy")
+                    # Keep history alive through Stand/Init and action blending. Only the
+                    # locomotion policy consumes it; the other experts remain single-frame.
+                    history_observation = history.append(observation)
+                    if self.supervisor is None or active_policy is self.behavior_policies.locomotion:
+                        observation = history_observation
                     policy_action = np.asarray(active_policy(observation), dtype=np.float32)
                     if self.supervisor is None:
                         action = policy_action

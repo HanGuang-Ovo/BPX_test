@@ -39,7 +39,7 @@ class BpxRoughCommandsCfg:
     )
 
 
-# [ ] 现在的崎岖地形行走只保留了一帧的观测，后续可以考虑增加历史帧的观测（直接将历史信息作为观测输入；将历史信息进行编码后输入）
+# 单帧基线；H=10 完整观测堆叠见独立的 bpx_rough_history_env_cfg.py。
 
 @configclass
 # 崎岖行走奖励：显式写出（不继承平地行走），当前数值与平地一致，保持策略契约不变，
@@ -143,7 +143,7 @@ class BpxRoughCurriculumCfg:
         func=TraversabilityCurriculum,
         params={"min_rough_distance": 1.0, "min_rough_time": 1.0,
                 "max_linear_error": 0.35, "max_angular_error": 0.5,
-                "successes_to_promote": 2},
+                "successes_to_promote": 2, "failures_to_demote": 2},
     )
 
 
