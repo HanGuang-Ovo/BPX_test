@@ -212,11 +212,17 @@ class BpxMujocoRobot:
             )
         return self.default_joint_position + self.config.control.action_scale * action_array
 
-    def apply_pd(self, action: FloatArray) -> tuple[FloatArray, FloatArray]:
+    def apply_pd(
+        self, action: FloatArray, *, stiffness: float | None = None,
+        damping: float | None = None, torque_limit: float | None = None,
+    ) -> tuple[FloatArray, FloatArray]:
         desired_position = self.desired_joint_position(action)
-        torque = self.config.control.stiffness * (desired_position - self.joint_position())
-        torque -= self.config.control.damping * self.joint_velocity()
-        torque = np.clip(torque, -self.config.control.torque_limit, self.config.control.torque_limit)
+        kp = self.config.control.stiffness if stiffness is None else stiffness
+        kd = self.config.control.damping if damping is None else damping
+        limit = self.config.control.torque_limit if torque_limit is None else min(torque_limit, self.config.control.torque_limit)
+        torque = kp * (desired_position - self.joint_position())
+        torque -= kd * self.joint_velocity()
+        torque = np.clip(torque, -limit, limit)
         if self.config.control.mode == "implicit":
             self.data.ctrl[self.actuator_ids] = desired_position
         else:

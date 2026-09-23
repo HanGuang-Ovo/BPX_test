@@ -1,5 +1,9 @@
 # BPX 从 Isaac Lab / Isaac Sim 到 MuJoCo 的 Sim2Sim 完整流程
 
+> `PD_Init` 分支更新（2026-09-23）：MuJoCo Init 默认改为 4 秒五次足端轨迹 + 解析 IK + PD，
+> 不再加载 Init ONNX。运行命令、参数和验证范围见 [README 的 PD Init 说明](README.md#pd-init4-秒五次足端轨迹)。
+> 本文以下关于 RL Init 的训练、奖励和模型加载描述保留为历史及 `mode="policy"` 对照说明。
+
 本文档说明本工程的 sim2sim 是如何建立的、每一层为什么需要对齐、当前代码如何运行，以及出现异常时怎样定位问题。这里的 sim2sim 指：**在 Isaac Lab / PhysX 中训练策略，把同一个策略放入 MuJoCo，使用 MuJoCo 的机器人状态重新构造训练时的观测，并形成完整闭环控制。**
 
 本文运行说明按 2026-09-17 源码同步。所有命令在项目根目录执行；安装与资产准备见 [项目 README](../README.md)。第 13～14 节保留早期实验记录，不代表当前模型已重新验证。默认 MuJoCo 从趴姿开始，需通过手柄 RB 触发 Init；单策略行走和零动作对拍必须另外准备站姿配置。

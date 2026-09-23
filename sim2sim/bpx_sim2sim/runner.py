@@ -2,7 +2,7 @@
 
 运行器是各层的汇合点，但不负责制定状态转换规则：
 
-- 200 Hz：更新 PD 力矩、推进 MuJoCo、执行基础跌倒检查；
+- 200 Hz：采样 Init 足端轨迹、更新 PD 力矩、推进 MuJoCo、执行基础跌倒检查；
 - 50 Hz：读取 command、更新 Supervisor、选择策略、构造观测并推理；
 - 策略切换：使用 ActionBlender 保证实际 action 连续；
 - 记录：把原始/过滤 command、行为模式、状态、动作和力矩写入 CSV。
@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Callable
-from dataclasses import dataclass
+from contextlib import nullcontext
+from dataclasses import dataclass, replace
 from pathlib import Path
 import threading
 import time
@@ -28,6 +29,7 @@ from .behaviors import BehaviorPolicies
 from .policy import ConstantPolicy, Policy
 from .history import ObservationHistory
 from .robot import BpxMujocoRobot
+from .init_controller import FootTrajectoryInit, quintic
 from .supervisor import BehaviorMode, BehaviorSupervisor, SupervisorState
 from .transition import ActionBlender
 from .terrain import load_model, add_course_labels
@@ -59,6 +61,9 @@ class CsvLogger:
                 "behavior_mode",
                 "behavior_policy",
                 "transition_alpha",
+                "feet_in_contact",
+                "init_phase",
+                "init_progress",
                 "base_x",
                 "base_y",
                 "base_z",
@@ -100,6 +105,8 @@ class CsvLogger:
         behavior_policy: str = "default",
         transition_alpha: float = 1.0,
         raw_command: npt.NDArray[np.float32] | None = None,
+        init_phase: str = "",
+        init_progress: float = 0.0,
     ) -> None:
         if self.writer is None:
             return
@@ -111,6 +118,9 @@ class CsvLogger:
             "behavior_mode": behavior_mode,
             "behavior_policy": behavior_policy,
             "transition_alpha": transition_alpha,
+            "feet_in_contact": robot.feet_in_contact(),
+            "init_phase": init_phase,
+            "init_progress": init_progress,
             "base_x": float(base_position[0]),
             "base_y": float(base_position[1]),
             "base_z": float(base_position[2]),
@@ -185,6 +195,9 @@ class Sim2SimRunner:
         self.model = load_model(config)
         self.data = mujoco.MjData(self.model)
         self.robot = BpxMujocoRobot(self.model, self.data, config)
+        if supervisor is not None and config.init_controller.mode == "pd" and policies.init is None:
+            self.behavior_policies = replace(policies, init=FootTrajectoryInit(self.robot))
+            supervisor.init_available = True
 
     def run(
         self,
@@ -197,6 +210,8 @@ class Sim2SimRunner:
         log_path: Path | None = None,
         print_interval: float = 1.0,
         terminate_on_fall: bool = False,
+        torque_plot: bool = False,
+        torque_window: float = 10.0,
     ) -> RunResult:
         """运行一次闭环仿真。
 
@@ -210,6 +225,8 @@ class Sim2SimRunner:
             log_path: 可选 CSV 输出路径。
             print_interval: 终端状态打印周期。
             terminate_on_fall: 是否启用原有的物理步级跌倒终止逻辑。
+            torque_plot: 是否打开独立进程的实时关节力矩窗口。
+            torque_window: 力矩曲线的滚动时间窗，单位秒。
 
         Supervisor 启用时，``command``/``command_source`` 都被视为 raw command；真正进入
         观测的是 SupervisorDecision.command。
@@ -254,13 +271,36 @@ class Sim2SimRunner:
         if self.supervisor is not None:
             self.supervisor.reset()
 
+        normal_gains = np.array([self.config.control.stiffness, self.config.control.damping])
+        init_gains = np.array([self.config.init_controller.stiffness, self.config.init_controller.damping])
+        gains = normal_gains.copy()
+        gain_start = gains.copy()
+        gain_started_at = float(self.data.time)
+
+        def apply_control():
+            nonlocal gains
+            is_init_pd = isinstance(active_policy, FootTrajectoryInit)
+            desired_gains = init_gains if is_init_pd else normal_gains
+            blend_duration = self.config.supervisor.action_blend_duration
+            alpha = quintic((self.data.time - gain_started_at) / blend_duration) if blend_duration else 1.0
+            gains = gain_start + alpha * (desired_gains - gain_start)
+            return self.robot.apply_pd(
+                action, stiffness=float(gains[0]), damping=float(gains[1]),
+                torque_limit=self.config.init_controller.torque_limit if is_init_pd else None,
+            )
+
         policy_paths = (
             _policy_path_text(self.behavior_policies.locomotion, self.config.repository_root),
             _policy_path_text(self.behavior_policies.stand, self.config.repository_root),
             _policy_path_text(self.behavior_policies.init, self.config.repository_root),
         )
+        plot_context = nullcontext(None)
+        if torque_plot:
+            from .torque_plot import TorquePlot
+            plot_context = TorquePlot(self.config.joint_names, self.config.control.torque_limit,
+                                      self.config.simulation.timestep, torque_window)
         viewer_context = _viewer_context(self.model, self.data, viewer)
-        with viewer_context as active_viewer, CsvLogger(log_path, self.config.joint_names) as logger:
+        with plot_context as plot, viewer_context as active_viewer, CsvLogger(log_path, self.config.joint_names) as logger:
             if active_viewer is not None:
                 add_course_labels(active_viewer, self.config)
             while self.data.time < run_duration:
@@ -291,6 +331,8 @@ class Sim2SimRunner:
                                 planar_speed=float(np.linalg.norm(state.base_linear_velocity[:2])),
                                 angular_speed=float(np.linalg.norm(state.base_angular_velocity)),
                                 feet_in_contact=self.robot.feet_in_contact(),
+                                init_trajectory_complete=(not isinstance(active_policy, FootTrajectoryInit)
+                                                          or active_policy.complete),
                             ),
                             self.config.simulation.policy_dt,
                             init_requested=init_requested,
@@ -313,6 +355,10 @@ class Sim2SimRunner:
                             # 因此只平滑 command，不会无意义地重复启动 action 混合。
                             action_blender.start(action)
                             active_policy = selected_policy
+                            gain_start = gains.copy()
+                            gain_started_at = float(self.data.time)
+                            if isinstance(active_policy, FootTrajectoryInit):
+                                active_policy.start()
                     observation = self.robot.observation(
                         observation_command if self.supervisor is not None else command_array,
                         action,
@@ -326,13 +372,14 @@ class Sim2SimRunner:
                     if self.supervisor is None or active_policy is self.behavior_policies.locomotion:
                         observation = history_observation
                     policy_action = np.asarray(active_policy(observation), dtype=np.float32)
-                    if self.supervisor is None:
+                    if self.supervisor is None or isinstance(active_policy, FootTrajectoryInit):
                         action = policy_action
+                        transition_alpha = 1.0
                     else:
                         # action 是“上一帧实际施加值”，下一帧也会作为 last_action 写入观测。
                         action = action_blender.update(policy_action, self.config.simulation.policy_dt)
                         transition_alpha = action_blender.alpha
-                    target, torque = self.robot.apply_pd(action)
+                    target, torque = apply_control()
                     logger.write(
                         self.robot,
                         command_array,
@@ -343,12 +390,24 @@ class Sim2SimRunner:
                         behavior_policy=behavior_policy,
                         transition_alpha=transition_alpha,
                         raw_command=raw_command_array,
+                        init_phase=active_policy.phase if isinstance(active_policy, FootTrajectoryInit) else "",
+                        init_progress=active_policy.progress if isinstance(active_policy, FootTrajectoryInit) else 0.0,
                     )
                     policy_steps += 1
 
-                # 在一个策略周期内保持目标角，但每个物理步重新计算 PD 力矩。
-                target, torque = self.robot.apply_pd(action)
+                # Init 在物理步上采样五次轨迹；RL 动作仍按策略周期保持。
+                if isinstance(active_policy, FootTrajectoryInit):
+                    if active_policy.timed_out:
+                        termination_reason = "init_pd_timeout"
+                        break
+                    action = active_policy()
+                target, torque = apply_control()
                 mujoco.mj_step(self.model, self.data)
+                if plot is not None:
+                    # Actual actuator contribution in joint space, including MuJoCo clipping.
+                    # Do not plot the pre-step PD estimate (especially for implicit servos).
+                    plot.publish(self.data.time, self.data.qfrc_actuator[self.robot.joint_dof_addresses],
+                                 behavior_mode)
 
                 if active_viewer is not None:
                     _update_viewer_overlay(
@@ -517,7 +576,7 @@ def _policy_path_text(policy: Policy | None, repository_root: Path) -> str:
         return "(not loaded)"
     path = getattr(policy, "path", None)
     if path is None:
-        return "(no model file)"
+        return getattr(policy, "label", "(no model file)")
     path = Path(path)
     try:
         return str(path.relative_to(repository_root))
@@ -532,7 +591,7 @@ def _policy_paths_overlay(
 
     active_name = {
         "default": "WALK", "locomotion": "WALK", "locomotion_fallback": "WALK",
-        "stand": "STAND", "init": "INIT",
+        "stand": "STAND", "init": "INIT", "init_pd": "INIT",
     }.get(behavior_policy)
     lines = ["Loaded policies (* = active):"]
     for name, path in zip(("WALK", "STAND", "INIT"), policy_paths, strict=True):

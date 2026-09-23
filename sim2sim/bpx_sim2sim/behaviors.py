@@ -1,8 +1,8 @@
 """把 Supervisor 的行为模式路由到对应底层策略。
 
-路由层只保存策略对象和回退关系，不参与状态转换。Stand/Init 使用 48 维单帧观测；
+路由层只保存控制器对象和回退关系，不参与状态转换。Stand/RL Init 使用 48 维单帧观测；
 Locomotion 可使用完整历史。所有策略保持 12 维 action、相同关节顺序、默认角和动作缩放，
-运行器才能安全地在策略输出之间进行 action 混合。
+运行器才能安全地在策略输出之间进行 action 混合。PD Init 读取机器人状态，输出同一动作接口。
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ class BehaviorPolicies:
     """一组可由上层状态机选择的底层策略。
 
     ``locomotion`` 是必需的。``stand``、``init`` 和 ``waiting`` 允许逐步加入：没有独立站立策略
-    时，STAND 会回退到 locomotion policy，并向它发送零 command；Init 策略不存在时，
+    时，STAND 会回退到 locomotion policy，并向它发送零 command；Init 控制器不存在时，
     Supervisor 不会进入 INIT，而是选择 DISABLED。
     """
 
@@ -52,7 +52,7 @@ class BehaviorPolicies:
         if mode in (BehaviorMode.WALK, BehaviorMode.STOPPING):
             return "locomotion"
         if mode == BehaviorMode.INIT:
-            return "init"
+            return getattr(self.init, "behavior_name", "init")
         if mode == BehaviorMode.WAITING_INIT:
             return "prone_hold"
         return "none"

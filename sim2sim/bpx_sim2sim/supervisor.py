@@ -30,6 +30,7 @@ class SupervisorState:
     planar_speed: float
     angular_speed: float
     feet_in_contact: int = 4
+    init_trajectory_complete: bool = True
 
 
 @dataclass(frozen=True)
@@ -200,7 +201,8 @@ class BehaviorSupervisor:
 
             # 起身完成必须连续确认 0.5 秒，保证交给 stand policy 时已经基本稳定。
             initialized = self.mode == BehaviorMode.INIT and (
-                state.base_height > self.config.init_base_height
+                state.init_trajectory_complete
+                and state.base_height > self.config.init_base_height
                 and state.tilt < self.config.init_tilt
                 and state.planar_speed < self.config.stop_linear_speed
                 and state.angular_speed < self.config.stop_angular_speed

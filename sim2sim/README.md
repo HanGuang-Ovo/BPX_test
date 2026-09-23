@@ -1,6 +1,6 @@
 # BPX Isaac Lab → MuJoCo 跨仿真运行
 
-本目录将 Isaac Lab / RSL-RL 导出的 BPX 行走、站立和趴卧起身策略放入 MuJoCo 闭环执行。本文按 2026-09-17 的代码与 TOML 配置更新；设计原理、排错过程和历史实验见 [完整工作流](BPX_SIM2SIM_WORKFLOW.md)。
+本目录在 MuJoCo 中运行 BPX 行走和站立策略。`PD_Init` 分支的起身默认采用足端轨迹插值 + 解析 IK + PD（2026-09-23 更新）；设计原理、排错过程和历史实验见 [完整工作流](BPX_SIM2SIM_WORKFLOW.md)。
 
 ## 1. 准备环境与模型
 
@@ -15,7 +15,7 @@ python -c "import mujoco, onnxruntime; print(mujoco.__version__, onnxruntime.__v
 
 依赖文件声明 NumPy、MuJoCo 和 ONNX Runtime 的最低版本，没有锁定精确版本。TorchScript 后端及导出一致性检查还需要同一环境中的 PyTorch。
 
-在 Isaac Lab 环境中用 `scripts/rsl_rl/play.py` 分别加载三个任务的目标检查点，生成 `exported/policy.onnx` 和 `exported/policy.pt`。训练与导出命令见 [项目 README](../README.md)。
+在 Isaac Lab 环境中用 `scripts/rsl_rl/play.py` 分别加载行走、站立任务的目标检查点，生成 `exported/policy.onnx` 和 `exported/policy.pt`。训练与导出命令见 [项目 README](../README.md)。
 
 更新 [config/bpx_flat.toml](config/bpx_flat.toml) 中的 `[paths]`：
 
@@ -24,7 +24,7 @@ python -c "import mujoco, onnxruntime; print(mujoco.__version__, onnxruntime.__v
 | `mjcf` | 带网格资源的 MuJoCo 模型 |
 | `locomotion_policy` | ONNX 主策略 |
 | `stand_policy` | Supervisor 可选站立 ONNX 策略 |
-| `init_policy` | Supervisor 可选起身 ONNX 策略 |
+| `init_policy` | 仅 `init_controller.mode="policy"` 时加载的旧起身 ONNX 策略 |
 | `torchscript_policy` | TorchScript 主策略及导出对比模型 |
 
 相对路径以项目根目录解析。默认路径指向具体实验，不会自动选择最新模型；`logs/` 被 Git 忽略，模型不保证随仓库提供。默认 ONNX 与 TorchScript 主策略路径可能来自不同实验，做一致性检查前必须指向**同一个检查点**的两种导出。
@@ -93,7 +93,7 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor \
 | 状态 | 动作来源 / 速度指令 |
 | --- | --- |
 | `WAITING_INIT` | `prone_hold` 固定动作；零指令 |
-| `INIT` | 起身策略；零指令 |
+| `INIT` | 默认 `init_pd` 足端轨迹 + PD；零指令 |
 | `STAND` | 站立策略；零指令 |
 | `WALK` | 行走策略；平滑后的运动指令 |
 | `STOPPING` | 行走策略；指令逐渐降到零 |
@@ -101,17 +101,94 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor \
 
 普通行走切换使用指令活跃度 `max(abs(command) / [1.0, 0.5, 1.0])`：进入阈值 0.12、持续 0.15 秒；退出阈值 0.05、持续 0.30 秒，且 WALK 至少驻留 0.30 秒。STOPPING 在低速持续 0.20 秒或停止等待达到 1.50 秒后转 Stand；指令恢复也可回到 Walk。不同策略对象间默认用 0.30 秒混合 action。
 
-未站立判定为高度 <0.20 m 或倾角 >0.70 rad。仅当高度低且倾角 <0.35 rad、Init 模型可用时，进入起身等待；不会把任意跌倒自动送入 Init。Init 倾角达到 0.55 rad 时中止。
+未站立判定为高度 <0.20 m 或倾角 >0.70 rad。仅当高度低且倾角 <0.35 rad、Init 控制器可用时，进入起身等待；不会把任意跌倒自动送入 Init。Init 倾角达到 0.55 rad 时中止。
 
-起身完成需高度 >0.36 m、倾角 <0.25 rad、平面速度 <0.05 m/s、角速度模长 <0.10 rad/s、四足接触，连续保持 0.50 秒。部署端当前不检查训练奖励中的前足宽度，完成条件与训练 `recovered` 并不完全相同。
+PD Init 先完成轨迹，再检查起身完成条件：高度 >0.36 m、倾角 <0.25 rad、平面速度 <0.05 m/s、角速度模长 <0.10 rad/s、四足接触，连续保持 0.50 秒。部署端当前不检查训练奖励中的前足宽度，完成条件与训练 `recovered` 并不完全相同。
 
 ### 启用规则、缺失模型与终止
 
-- 显式 `--supervisor`、指定 `--stand-policy`/`--init-policy`，或使用手柄且 TOML 配置了 Init 路径，均会启用 Supervisor。
-- `--stand-policy`、`--init-policy` 临时覆盖相应 ONNX 路径；主策略格式由 `--backend` 决定。
-- 缺少主策略时无法运行对应神经网络后端；可选 Stand/Init 文件缺失会警告。Stand 缺失时回退到零指令行走策略；默认趴姿缺少 Init 时进入 DISABLED 并结束。
+- 显式 `--supervisor`、`--auto-init`、指定 `--stand-policy`/`--init-policy`，或使用手柄且配置了 PD Init/Init 路径，均会启用 Supervisor。
+- `--stand-policy` 覆盖站立 ONNX 路径；`--init-policy` 显式切回 RL Init 并覆盖起身 ONNX 路径。主策略格式由 `--backend` 决定。
+- 缺少主策略时无法运行对应神经网络后端。Stand 缺失时警告并回退到零指令行走策略；PD Init 不加载起身模型。仅 RL Init 模式缺失起身模型时，趴姿进入 DISABLED 并结束。
 - 不使用手柄、Supervisor 和专家路径参数时，运行单主策略，不存在 DISABLED 状态判断。
 - 单策略默认不因跌倒提前结束，可加 `--terminate-on-fall`。Supervisor 的 DISABLED 终止独立于这个选项；启用物理跌倒终止时，WAITING_INIT 和 INIT 阶段免于该项检查。
+
+### PD Init：4 秒五次足端轨迹
+
+使用当前历史观测行走策略，在平地区域趴卧起步：
+
+```bash
+conda activate bpx-sim2sim
+python sim2sim/run_mujoco.py \
+    --config sim2sim/config/bpx_terrain_history.toml \
+    --auto-init --vx 0 --viewer --duration 10 \
+    --log sim2sim/logs/pd_init.csv
+```
+
+`--auto-init` 自动启用 Supervisor；手柄操作则使用 `--supervisor --gamepad`，按 RB 起身。
+`--vx 0` 用于观察起身后站立，改为 `--vx 0.2` 可继续验证行走。
+
+`[init_controller]` 控制起身过程：
+
+- 默认前 1 秒将实际足端位置插值到低位支撑点，后 3 秒四腿同步竖直伸展。
+  每段采用 `s(u)=10u³-15u⁴+6u⁵`，段端速度和加速度为零。
+- 轨迹坐标是各髋横滚关节原点下、与机身轴向一致的坐标系，端点为 toe link 原点。
+  支撑阶段收拢到 `x=0`、模型标称左右偏移和 `z=-0.19 m`，抬升至 `z=-0.38 m`。
+  `standing_depth` 是运动学距离，不是机身高度；当前模型平地实测结束高度约 0.40 m。
+  起身期间没有世界系锁足或机身姿态闭环补偿，机身可能有少量水平位移。
+- IK 从 MJCF 读取腿长、左右偏移和关节限位；不可达目标或越限目标直接报错。
+  Init 按物理步（默认 200 Hz）更新轨迹；Stand/Walk 仍按 50 Hz 推理，历史观测持续更新。
+- Init 专用 `Kp=80`、`Kd=2`，力矩限制为 Init 与公共限幅的较小值（默认 30 N·m）。
+  当前 5 ms 显式 PD 下，`Kd=3` 曾在静置后触发起身时出现高频振荡，因此默认降为 2。
+  回归覆盖立即触发及等待 0.3、3、10 秒后触发的场景。
+  进入/退出 Init 时，增益在 `action_blend_duration` 内平滑过渡。
+  Init 从实测关节姿态接入，退出时 action 使用原有混合器。
+- `joint_speed_limit=2 rad/s` 限制目标关节角变化率；实际关节速度仍由物理动力学决定。
+  跟踪误差超过 `0.35 rad` 暂停轨迹推进；支撑阶段结束后若缺少四足接触，也暂停推进。
+  因此 4 秒是标称轨迹时间，暂停会延长实际起身时间。
+- 轨迹完成后还需连续 0.5 秒满足既有高度、倾角、速度和四足接触条件，才进入 Stand。
+  倾角达到 0.55 rad 仍由 Supervisor 中止；进入 Init 后超过 8 秒未交接，以
+  `init_pd_timeout` 结束运行，避免一直停留在未完成的起身状态。
+
+CSV 中 `behavior_policy=init_pd` 标识传统控制；`init_phase` 为 support/lift/paused/settle，
+`init_progress` 为累计轨迹时间（秒），`feet_in_contact` 为接触足数量。
+旧配置未提供 `[init_controller]` 时仍使用 RL Init；当前四份内置配置均显式选择 `mode="pd"`。
+Isaac Lab 的训练环境和奖励没有修改。当前验证范围是平地水平趴卧起身，不包含台阶落足或翻身恢复。
+
+回归检查：
+
+```bash
+python -m unittest discover -s sim2sim -p 'test_*.py' -v
+```
+
+### 实时关节力矩窗口
+
+在运行命令中加入 `--torque-plot`，会打开独立的 Tkinter 窗口。它可以与 MuJoCo viewer 同时使用：
+
+```bash
+python sim2sim/run_mujoco.py \
+    --config sim2sim/config/bpx_terrain_history.toml \
+    --supervisor --gamepad --viewer --torque-plot \
+    --torque-window 10 --duration 120
+```
+
+无手柄时，将 `--supervisor --gamepad` 换成 `--auto-init --vx 0`。
+
+- 四列依次为 FL、FR、HL、HR，三行依次为 hip roll、hip pitch、knee，共 12 张曲线。
+- 单位为 N·m，展示当前力矩、当前时间窗内的绝对峰值和公共配置力矩限幅虚线；
+  当前绝对力矩达到公共限幅的 90% 时数值显示红色。
+- 读取每个物理步之后的 `qfrc_actuator`，按关节 DOF 名称映射，这是执行器施加的关节力矩，
+  不包含接触力矩或其他外力，也不是限幅前的 PD 估计值。
+- 默认 10 秒滚动时间窗，可在窗口选择 5/10/20/30 秒。`Pause display` 只冻结显示，
+  仿真继续运行；`Resume display` 返回实时曲线。`Save visible CSV` 导出所显示时间段的数据。
+- 默认 200 Hz 采样，绘图约 20 Hz 刷新。曲线按像素保留最大/最小值，以保留高频力矩尖峰。
+  绘图使用独立进程和有界非阻塞队列；若绘图跟不上，状态栏会显示丢失的显示样本数。
+  需要实时观察时保持实时限速，不添加 `--no-realtime`。
+- 关闭力矩窗口不会停止仿真；仿真结束时窗口自动关闭，需要保留数据请提前导出。
+  此处导出的 CSV 来自物理步采样，与 `--log` 的策略步 CSV 分开。
+
+窗口使用 Python 自带的 Tkinter，不需要 matplotlib 或 Qt。若 Python 环境没有 Tk/Tcl，
+需要在该环境补齐 Tk 支持；打开窗口时还需要可用的桌面显示环境。
 
 ## 4. 无手柄：站姿单策略测试
 

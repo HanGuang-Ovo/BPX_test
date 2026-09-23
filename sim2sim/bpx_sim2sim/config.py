@@ -149,6 +149,24 @@ class TerrainConfig:
 
 
 @dataclass(frozen=True)
+class InitControllerConfig:
+    """MuJoCo 足端轨迹起身；depth 为髋到 toe link 原点的竖直距离。"""
+
+    mode: str = "policy"
+    duration: float = 4.0
+    support_duration: float = 1.0
+    support_depth: float = 0.19
+    standing_depth: float = 0.38
+    stiffness: float = 80.0
+    # 5 ms 显式 PD 下，Kd=3 曾在趴姿静置后触发起身时产生高频振荡。
+    damping: float = 2.0
+    torque_limit: float = 30.0
+    joint_speed_limit: float = 2.0
+    tracking_error_limit: float = 0.35
+    timeout: float = 8.0
+
+
+@dataclass(frozen=True)
 class Sim2SimConfig:
     repository_root: Path
     paths: PathConfig
@@ -164,6 +182,7 @@ class Sim2SimConfig:
     base_joint_name: str
     floor_geom_name: str
     terrain: TerrainConfig = TerrainConfig()
+    init_controller: InitControllerConfig = InitControllerConfig()
 
 
 def _tuple_of_floats(value: object, length: int, name: str) -> tuple[float, ...]:
@@ -311,7 +330,23 @@ def load_config(path: str | Path, repository_root: str | Path | None = None) -> 
         base_joint_name=str(robot["base_joint_name"]),
         floor_geom_name=str(robot["floor_geom_name"]),
         terrain=TerrainConfig(**raw.get("terrain", {})),
+        init_controller=InitControllerConfig(**raw.get("init_controller", {})),
     )
+
+    init = cfg.init_controller
+    if init.mode not in ("policy", "pd"):
+        raise ValueError("init_controller.mode 必须为 policy 或 pd")
+    for name in ("duration", "support_duration", "support_depth", "standing_depth", "stiffness",
+                 "damping", "torque_limit", "joint_speed_limit", "tracking_error_limit", "timeout"):
+        value = getattr(init, name)
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"init_controller.{name} 必须为有限正数")
+    if not init.support_duration < init.duration < init.timeout:
+        raise ValueError("Init 要求 support_duration < duration < timeout")
+    if init.support_depth >= init.standing_depth:
+        raise ValueError("Init support_depth 必须小于 standing_depth")
+    if init.mode == "pd" and cfg.control.mode != "explicit":
+        raise ValueError("足端轨迹 Init 需要 control.mode = explicit")
 
     if cfg.terrain.kind not in ("flat", "three_level"):
         raise ValueError("terrain.kind must be flat or three_level")

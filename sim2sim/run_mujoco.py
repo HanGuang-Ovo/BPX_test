@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 import sys
 
@@ -36,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wz", type=float, default=None, help="目标偏航角速度，rad/s")
     parser.add_argument("--duration", type=float, default=None, help="仿真时长，秒")
     parser.add_argument("--viewer", action="store_true", help="打开 MuJoCo 可视化窗口")
+    parser.add_argument("--torque-plot", action="store_true", help="打开 12 关节实际输出力矩曲线窗口")
+    parser.add_argument("--torque-window", type=float, default=10.0, help="力矩曲线时间窗，1–30 秒（默认 10）")
     parser.add_argument("--no-realtime", action="store_true", help="关闭实时限速，尽快完成仿真")
     parser.add_argument("--gamepad", action="store_true", help="用 Linux 游戏手柄实时生成速度指令")
     parser.add_argument("--list-gamepads", action="store_true", help="列出检测到的游戏手柄后退出")
@@ -71,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--auto-init",
         action="store_true",
-        help="无手柄时自动触发 Init 起身（需配合 --supervisor；摔倒回到趴姿会再次自动起身）",
+        help="无手柄时自动启用 Supervisor 并触发 Init（摔倒回到趴姿会再次自动起身）",
     )
     parser.add_argument(
         "--stand-policy",
@@ -82,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     init_policy_group.add_argument(
         "--init-policy",
         type=Path,
-        help="覆盖 TOML 中的 Init 起身 ONNX 策略路径（同为 48 输入、12 输出）",
+        help="切换回 RL Init，并覆盖起身 ONNX 路径（48 输入、12 输出）",
     )
     init_policy_group.add_argument(
         "--recovery-policy",
@@ -145,6 +148,9 @@ def main() -> int:
         return 0
 
     config = load_config(args.config)
+    # An explicit model override selects the legacy RL Init for comparisons.
+    if args.init_policy is not None:
+        config = replace(config, init_controller=replace(config.init_controller, mode="policy"))
     for path_name, path in (
         ("MJCF", config.paths.mjcf),
         ("TorchScript", config.paths.torchscript_policy),
@@ -172,9 +178,10 @@ def main() -> int:
     # 指定专家策略或使用已配置 Init 的手柄流程时隐式启用 Supervisor。
     use_supervisor = (
         args.supervisor
+        or args.auto_init
         or args.stand_policy is not None
         or args.init_policy is not None
-        or (use_gamepad and config.paths.init_policy is not None)
+        or (use_gamepad and (config.paths.init_policy is not None or config.init_controller.mode == "pd"))
     )
     stand_policy = None
     init_policy = None
@@ -188,15 +195,15 @@ def main() -> int:
             12 + 3 * len(config.joint_names),
             config.observation.action_dimension,
         )
-        init_policy = load_optional_policy(
-            "init",
-            init_path,
-            12 + 3 * len(config.joint_names),
-            config.observation.action_dimension,
-        )
-    # init_available 必须反映真实模型是否加载；否则未站立时会路由到空策略。
+        if config.init_controller.mode == "policy":
+            init_policy = load_optional_policy(
+                "init", init_path, 12 + 3 * len(config.joint_names), config.observation.action_dimension,
+            )
+        else:
+            print(f"Init: 足端五次轨迹 + PD，标称时长 {config.init_controller.duration:.1f}s")
+    # Init 可由传统控制器或已加载的神经网络提供。
     supervisor = (
-        BehaviorSupervisor(config.supervisor, init_available=init_policy is not None)
+        BehaviorSupervisor(config.supervisor, init_available=init_policy is not None or config.init_controller.mode == "pd")
         if use_supervisor
         else None
     )
@@ -263,6 +270,8 @@ def main() -> int:
                 realtime=False if args.no_realtime else None,
                 log_path=args.log,
                 terminate_on_fall=args.terminate_on_fall,
+                torque_plot=args.torque_plot,
+                torque_window=args.torque_window,
             )
     except (OSError, ValueError) as exc:
         if not use_gamepad:

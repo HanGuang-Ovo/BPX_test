@@ -1,11 +1,11 @@
 # Three-level course: flat, mild (+/-2 cm), moderate (+/-4 cm).
 [paths]
 mjcf = "source/BPX_test/BPX_test/BPX_structure/mjcf/bpx.xml"
-# 三种行为策略统一使用 ONNX；Supervisor 启用后会自动读取站立和 Init 策略。
+# Stand/Walk 使用 ONNX；Init 默认使用下方配置的足端轨迹 + PD。
 locomotion_policy = "logs/rsl_rl/bpx_locomotion/2026-09-15_13-15-43_stable/exported/policy.onnx"
 
 stand_policy = "logs/rsl_rl/bpx_stand/2026-09-15_00-13-24_stable/exported/policy.onnx"
-# 状态驱动版 Init：起身过程 command 槽位恒为零，由完成状态切换到 Stand。
+# 旧 RL Init 路径仅供 mode="policy" 或 --init-policy 对照实验。
 
 init_policy = "logs/rsl_rl/bpx_init/2026-09-17_16-52-10_stable/exported/policy.onnx"
 # 保留 TorchScript 导出，供 --backend torchscript 和导出一致性检查使用。
@@ -27,6 +27,22 @@ stiffness = 40.0
 damping = 1.0
 torque_limit = 30.0
 velocity_limit = 20.0
+
+# Init 专用参数；仅 MuJoCo 使用。4 秒为轨迹时长，站稳确认另计。
+[init_controller]
+mode = "pd"
+duration = 4.0
+support_duration = 1.0
+# 髋到 toe link 原点的竖直距离，不是机身离地高度。
+support_depth = 0.19
+standing_depth = 0.38
+stiffness = 80.0
+# 5 ms 显式 PD 下使用 2.0；3.0 在等待后起身时可能振荡。
+damping = 2.0
+torque_limit = 30.0
+joint_speed_limit = 2.0
+tracking_error_limit = 0.35
+timeout = 8.0
 
 [initial_state]
 base_position = [0.0, 0.0, 0.40]
@@ -86,7 +102,7 @@ stand_confirm_time = 0.20
 stopping_timeout = 1.50
 
 # --- 未站立检测与 Init 起身 ---
-# 低于高度阈值或超过倾角阈值即认为未站立；没有 Init policy 时进入 DISABLED。
+# 低于高度阈值或超过倾角阈值即认为未站立；没有 Init 控制器时进入 DISABLED。
 fall_base_height = 0.20
 fall_tilt = 0.70
 # Init 只覆盖腹部朝地、机身接近水平的趴卧状态；侧翻和仰翻不进入该策略。
