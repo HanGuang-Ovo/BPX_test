@@ -225,7 +225,11 @@ class Sim2SimRunner:
         run_duration = self.config.simulation.duration if duration is None else duration
         use_realtime = self.config.simulation.realtime if realtime is None else realtime
         self.robot.reset()
-        history = ObservationHistory(self.config.observation.history_length, len(self.config.joint_names))
+        history = ObservationHistory(
+            self.config.observation.history_length,
+            len(self.config.joint_names),
+            include_base_lin_vel=self.config.observation.include_base_lin_vel,
+        )
         if self.supervisor is None:
             action = np.zeros(self.config.observation.action_dimension, dtype=np.float32)
         else:
@@ -250,6 +254,11 @@ class Sim2SimRunner:
         if self.supervisor is not None:
             self.supervisor.reset()
 
+        policy_paths = (
+            _policy_path_text(self.behavior_policies.locomotion, self.config.repository_root),
+            _policy_path_text(self.behavior_policies.stand, self.config.repository_root),
+            _policy_path_text(self.behavior_policies.init, self.config.repository_root),
+        )
         viewer_context = _viewer_context(self.model, self.data, viewer)
         with viewer_context as active_viewer, CsvLogger(log_path, self.config.joint_names) as logger:
             if active_viewer is not None:
@@ -312,7 +321,8 @@ class Sim2SimRunner:
                         raise RuntimeError("没有可执行的 behavior policy")
                     # Keep history alive through Stand/Init and action blending. Only the
                     # locomotion policy consumes it; the other experts remain single-frame.
-                    history_observation = history.append(observation)
+                    locomotion_frame = observation if self.config.observation.include_base_lin_vel else observation[3:]
+                    history_observation = history.append(locomotion_frame)
                     if self.supervisor is None or active_policy is self.behavior_policies.locomotion:
                         observation = history_observation
                     policy_action = np.asarray(active_policy(observation), dtype=np.float32)
@@ -349,6 +359,7 @@ class Sim2SimRunner:
                         torque,
                         behavior_mode,
                         behavior_policy,
+                        policy_paths,
                     )
                     active_viewer.sync()
                     if not active_viewer.is_running():
@@ -499,6 +510,36 @@ def _viewer_overlay_text(
     return left, right
 
 
+def _policy_path_text(policy: Policy | None, repository_root: Path) -> str:
+    """Show the model actually loaded, including command-line path overrides."""
+
+    if policy is None:
+        return "(not loaded)"
+    path = getattr(policy, "path", None)
+    if path is None:
+        return "(no model file)"
+    path = Path(path)
+    try:
+        return str(path.relative_to(repository_root))
+    except ValueError:
+        return str(path)
+
+
+def _policy_paths_overlay(
+    policy_paths: tuple[str, str, str], behavior_policy: str,
+) -> str:
+    """Three policy paths for the viewer's top-right corner."""
+
+    active_name = {
+        "default": "WALK", "locomotion": "WALK", "locomotion_fallback": "WALK",
+        "stand": "STAND", "init": "INIT",
+    }.get(behavior_policy)
+    lines = ["Loaded policies (* = active):"]
+    for name, path in zip(("WALK", "STAND", "INIT"), policy_paths, strict=True):
+        lines.append(f"{'*' if name == active_name else ' '} {name}: {path}")
+    return "\n".join(lines)
+
+
 def _update_viewer_overlay(
     viewer: object,
     robot: BpxMujocoRobot,
@@ -507,6 +548,7 @@ def _update_viewer_overlay(
     torque: npt.NDArray[np.floating],
     behavior_mode: str,
     behavior_policy: str,
+    policy_paths: tuple[str, str, str],
 ) -> None:
     """更新 viewer 状态栏；旧版 MuJoCo 没有 set_texts 时静默跳过。
 
@@ -518,11 +560,8 @@ def _update_viewer_overlay(
     if set_texts is None:
         return
     left, right = _viewer_overlay_text(robot, command, action, torque, behavior_mode, behavior_policy)
-    set_texts(
-        (
-            mujoco.mjtFont.mjFONT_BIG,
-            mujoco.mjtGridPos.mjGRID_TOPLEFT,
-            left,
-            right,
-        )
-    )
+    set_texts([
+        (mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, left, right),
+        (mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPRIGHT,
+         _policy_paths_overlay(policy_paths, behavior_policy), ""),
+    ])

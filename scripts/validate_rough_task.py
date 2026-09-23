@@ -30,7 +30,14 @@ def main():
         expected_obs.policy.history_length = 10
         expected_obs.policy.flatten_history_dim = True
         assert BpxRoughEnvCfg().observations.to_dict() == flat.observations.to_dict()
-    assert cfg.observations.to_dict() == expected_obs.to_dict()
+        expected_critic = expected_obs.policy.copy()
+        expected_critic.base_lin_vel.noise = None
+        expected_obs.policy.base_lin_vel = None
+        assert cfg.observations.critic.to_dict() == expected_critic.to_dict()
+    # 显式观测类不声明禁用项；旧继承配置以 None 表示禁用，比较时统一去除。
+    assert {k: v for k, v in cfg.observations.policy.to_dict().items() if v is not None} == {
+        k: v for k, v in expected_obs.policy.to_dict().items() if v is not None
+    }
     assert cfg.actions.to_dict() == flat.actions.to_dict()
     assert flat.scene.terrain.terrain_type == 'plane'
     assert flat.events.reset_base.params['pose_range']['x'] == (-.5, .5)
@@ -61,9 +68,18 @@ def main():
     env = gym.make(task, cfg=cfg).unwrapped
     try:
         obs, _ = env.reset()
-        assert obs['policy'].shape == (4, 480 if args.history else 48)
+        assert obs['policy'].shape == (4, 450 if args.history else 48)
         if args.history:
-            validate_history(env, obs['policy'])
+            assert obs['critic'].shape == (4, 480)
+            from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+            wrapped = RslRlVecEnvWrapper(env)
+            assert wrapped.num_obs == 450 and wrapped.num_privileged_obs == 480
+            actor_obs, extras = wrapped.get_observations()
+            assert actor_obs.shape == (4, 450)
+            assert extras['observations']['critic'].shape == (4, 480)
+            validate_history(env, actor_obs, 'policy')
+            obs, _ = env.reset()
+            validate_history(env, obs['critic'], 'critic')
             env.reset()
         ids = torch.arange(4, device=env.device)
         terrain = env.scene.terrain
@@ -114,24 +130,27 @@ def main():
         env.close()
 
 
-def validate_history(env, observation):
+def validate_history(env, observation, group):
     """Exercise actual manager buffers, including per-environment reset isolation."""
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'sim2sim'))
     from bpx_sim2sim.history import ObservationHistory
 
-    widths = (3, 3, 3, 3, 12, 12, 12)
+    privileged = group == 'critic'
+    widths = (3, 3, 3, 3, 12, 12, 12) if privileged else (3, 3, 3, 12, 12, 12)
 
     def terms(value):
         return [part.reshape(4, 10, width) for part, width in
                 zip(value.split([10 * width for width in widths], dim=-1), widths)]
 
-    assert list(env.observation_manager.active_terms) == ['policy']
+    assert list(env.observation_manager.active_terms) == ['policy', 'critic']
+    assert 'base_lin_vel' not in env.observation_manager.active_terms['policy']
+    assert env.observation_manager.active_terms['critic'][0] == 'base_lin_vel'
     for term in terms(observation):
         torch.testing.assert_close(term, term[:, :1].expand_as(term))
     previous = observation.clone()
-    deployment_histories = [ObservationHistory(10) for _ in range(4)]
+    deployment_histories = [ObservationHistory(10, include_base_lin_vel=privileged) for _ in range(4)]
 
     def check_deployment(value):
         latest = torch.cat([term[:, -1] for term in terms(value)], dim=-1).cpu().numpy()
@@ -142,27 +161,29 @@ def validate_history(env, observation):
     for step in range(12):
         action = torch.full((4, 12), .01 * (step + 1), device=env.device)
         obs, _, terminated, truncated, _ = env.step(action)
-        current = obs['policy']
+        current = obs[group]
+        if privileged:
+            torch.testing.assert_close(terms(current)[0][:, -1], env.scene['robot'].data.root_lin_vel_b)
         live = ~(terminated | truncated)
         for index in range(4):
             if not live[index]:
-                deployment_histories[index] = ObservationHistory(10)
+                deployment_histories[index] = ObservationHistory(10, include_base_lin_vel=privileged)
         check_deployment(current)
         for old, new in zip(terms(previous), terms(current)):
             torch.testing.assert_close(new[live, :-1], old[live, 1:])
         torch.testing.assert_close(terms(current)[-1][live, -1], action[live])
         # Reading observations must not advance or resample the saved history.
-        torch.testing.assert_close(env.observation_manager.compute()['policy'], current)
+        torch.testing.assert_close(env.observation_manager.compute()[group], current)
         previous = current.clone()
     env._reset_idx(torch.tensor([0], device=env.device))
-    current = env.observation_manager.compute(update_history=True)['policy']
-    deployment_histories[0] = ObservationHistory(10)
+    current = env.observation_manager.compute(update_history=True)[group]
+    deployment_histories[0] = ObservationHistory(10, include_base_lin_vel=privileged)
     check_deployment(current)
     for old, new in zip(terms(previous), terms(current)):
         torch.testing.assert_close(new[0], new[0, :1].expand_as(new[0]))
         torch.testing.assert_close(new[1:, :-1], old[1:, 1:])
     torch.testing.assert_close(terms(current)[-1][0], torch.zeros((10, 12), device=env.device))
-    print('PASS: 480-D term-major history, first-frame fill, shift, action timing, isolated reset')
+    print(f'PASS: {group} {sum(widths) * 10}-D history, fill, shift, action timing, isolated reset')
 
 
 try:

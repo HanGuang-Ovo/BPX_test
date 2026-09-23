@@ -185,13 +185,13 @@ def main() -> int:
         stand_policy = load_optional_policy(
             "stand",
             stand_path,
-            config.observation.frame_dimension,
+            12 + 3 * len(config.joint_names),
             config.observation.action_dimension,
         )
         init_policy = load_optional_policy(
             "init",
             init_path,
-            config.observation.frame_dimension,
+            12 + 3 * len(config.joint_names),
             config.observation.action_dimension,
         )
     # init_available 必须反映真实模型是否加载；否则未站立时会路由到空策略。

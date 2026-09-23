@@ -48,6 +48,7 @@ class TorchScriptPolicy:
             raise RuntimeError(
                 "TorchScript 后端需要 PyTorch。请在包含 torch 和 mujoco 的同一 Python 环境中运行。"
             ) from exc
+        self.path = path.expanduser().resolve()
         self.torch = torch
         self.device = device
         self.observation_dimension = observation_dimension
@@ -69,9 +70,10 @@ class OnnxPolicy:
             import onnxruntime as ort
         except ImportError as exc:
             raise RuntimeError("ONNX 后端需要 onnxruntime：python -m pip install onnxruntime") from exc
+        self.path = path.expanduser().resolve()
         self.observation_dimension = observation_dimension
         self.action_dimension = action_dimension
-        self.session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        self.session = ort.InferenceSession(str(self.path), providers=["CPUExecutionProvider"])
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
 

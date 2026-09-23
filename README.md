@@ -2,7 +2,7 @@
 
 本项目基于 Isaac Lab 的管理器式强化学习环境，使用 RSL-RL 的 PPO 算法分别训练 BPX 四足机器人的行走、静止站立和趴卧起身策略，并将导出的策略部署到 MuJoCo，验证不同物理引擎中的控制表现（sim2sim）。项目现有环境说明以 Isaac Lab 2.2.1 为基线。
 
-行走、站立、起身三类策略共享机器人模型和 12 维动作接口；基线使用 48 维单帧观测，崎岖行走另提供 H=10、480 维历史观测版本。行走和站立分别提供平地与崎岖地形训练任务。MuJoCo 端通过上层状态机（Supervisor）选择策略，支持手柄速度指令、起身触发、停止过渡、动作平滑和 CSV 日志记录。
+行走、站立、起身三类策略共享机器人模型和 12 维动作接口；基线使用 48 维单帧观测，崎岖行走另提供 H=10、Actor 450 维 / Critic 480 维的非对称历史观测版本。行走和站立分别提供平地与崎岖地形训练任务。MuJoCo 端通过上层状态机（Supervisor）选择策略，支持手柄速度指令、起身触发、停止过渡、动作平滑和 CSV 日志记录。
 
 ## 任务与功能
 
@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- |
 | `BPX-Locomotion-v0` | 平地前后、横向移动及偏航速度跟踪 | 20 秒 | 1500 | `logs/rsl_rl/bpx_locomotion/` |
 | `BPX-Locomotion-Rough-v0` | 平台复位、课程起伏地形上的盲走 | 20 秒（含边界截断） | 1500 | `logs/rsl_rl/bpx_rough/` |
-| `BPX-Locomotion-Rough-History-v0` | H=10 完整观测历史的崎岖盲走 | 20 秒（含边界截断） | 1500 | `logs/rsl_rl/bpx_rough_history/` |
+| `BPX-Locomotion-Rough-History-v0` | H=10 非对称观测历史的崎岖盲走 | 20 秒（含边界截断） | 1500 | `logs/rsl_rl/bpx_rough_history_asymmetric/` |
 | `BPX-Stand-v0` | 零速度指令下保持稳定站姿 | 15 秒 | 1500 | `logs/rsl_rl/bpx_stand/` |
 | `BPX-Stand-Rough-v0` | 崎岖区域复位、站稳课程训练 | 15 秒 | 1500 | `logs/rsl_rl/bpx_rough_stand/` |
 | `BPX-Init-v0` | 从腹部朝地的趴卧状态起身并保持站立 | 4 秒 | 3000 | `logs/rsl_rl/bpx_init/` |
@@ -20,7 +20,7 @@
 
 Init 针对腹部朝地、机身接近水平的趴姿训练，不覆盖侧翻或仰翻后的翻身恢复。原有任务使用平地场景；新增 Rough 任务使用课程起伏地形。
 
-历史版本的训练、观测布局和部署步骤见 [H=10 使用说明](ROUGH_HISTORY_TRAINING.md)。Actor/Critic 共用 480 维观测，保留基座线速度；旧的 48 维 checkpoint 不能直接恢复到历史任务。
+历史版本的训练、观测布局和部署步骤见 [H=10 使用说明](ROUGH_HISTORY_TRAINING.md)。Actor 使用 450 维观测，Critic 使用 480 维观测，只有 Critic 接收基座线速度真值；旧的 48 维或对称 480 维 Actor checkpoint 不能直接恢复到该任务。
 
 ## 项目结构
 
@@ -322,7 +322,7 @@ python sim2sim/validate_policy_export.py --samples 100
 | --- | --- |
 | 物理步长 / 频率 | `0.005 s` / 200 Hz |
 | 策略执行频率 | 每 4 个物理步更新一次，即 50 Hz |
-| 观测 / 动作维度 | 48 / 12（H=10 历史任务为 480 / 12） |
+| 观测 / 动作维度 | 48 / 12（H=10 历史 Actor 为 450 / 12，Critic 输入 480 维） |
 | 动作含义 | `目标关节角 = 默认关节角 + 0.5 × action` |
 | 默认关节角 | 髋横滚 `0.0`、髋俯仰 `0.7`、膝关节 `-1.4` rad |
 | 名义 PD 增益 | `Kp = 40`、`Kd = 1` |
@@ -336,7 +336,7 @@ python sim2sim/validate_policy_export.py --samples 100
 + 相对默认姿态的关节角(12) + 相对关节速度(12) + 上一步动作(12)
 ```
 
-历史任务将每个观测项按"最旧到最新"各自堆叠 10 帧后再拼接（按项分块，不是 10 个完整 48 维帧的直接相连），得到 480 维输入；完整布局与部署侧的历史缓存契约见 [H=10 使用说明](ROUGH_HISTORY_TRAINING.md)。
+历史任务将每个观测项按"最旧到最新"各自堆叠 10 帧后再拼接（按项分块，不是 10 个完整 48 维帧的直接相连），Actor 移除线速度后得到 450 维输入，Critic 保留线速度真值得到 480 维输入；完整布局与部署侧的历史缓存契约见 [H=10 使用说明](ROUGH_HISTORY_TRAINING.md)。
 
 关节按“类型优先”排列：先四个髋横滚，再四个髋俯仰，最后四个膝关节；每组内部均为 `fl → fr → hl → hr`（左前、右前、左后、右后）。不要直接用 MJCF 中的关节存储顺序替代策略顺序，详见 [关节顺序映射说明](sim2sim/JOINT_ORDER_MAPPING_GUIDE.md)。
 
@@ -376,4 +376,7 @@ pre-commit run --all-files
 - [行走控制参考资料](BPX_LOCOMOTION_LITERATURE.md)
 - [项目交互式思维导图](BPX_PROJECT_MINDMAP.html)
 
-部分专题文档保留了早期实验记录；具体奖励权重、采样范围和运行参数以当前源码及本次训练保存的 `params/` 为准。
+# TODO
+- [ ] 尝试使用HIMloco框架实现对比差距
+- [ ] 参考RMA论文尝试历史信息编码器
+- [ ] 完善域随机化（视sim2real情况）

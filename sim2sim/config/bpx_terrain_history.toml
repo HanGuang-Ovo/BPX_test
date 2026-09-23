@@ -1,17 +1,17 @@
-# H=10 rough locomotion; replace 2026-09-21_22-39-14 with a trained history run.
+# Asymmetric H=10 rough locomotion; replace YOUR_RUN with a newly trained run.
 # Term-major, oldest-to-newest; first frame fills history; updated at 50 Hz.
 [paths]
 mjcf = "source/BPX_test/BPX_test/BPX_structure/mjcf/bpx.xml"
 
 # 三种行为策略统一使用 ONNX；Supervisor 启用后会自动读取站立和 Init 策略。
-locomotion_policy = "logs/rsl_rl/bpx_rough_history/2026-09-22_00-18-16_stable/exported/policy.onnx"
+locomotion_policy = "logs/rsl_rl/bpx_rough_history_asymmetric/2026-09-23_11-17-22/exported/policy.onnx"
 
 stand_policy = "logs/rsl_rl/bpx_rough_stand/2026-09-20_13-01-51/exported/policy.onnx"
 # 状态驱动版 Init：起身过程 command 槽位恒为零，由完成状态切换到 Stand。
 
 init_policy = "logs/rsl_rl/bpx_init/2026-09-17_16-52-10_stable/exported/policy.onnx"
 # 保留 TorchScript 导出，供 --backend torchscript 和导出一致性检查使用。
-torchscript_policy = "logs/rsl_rl/bpx_rough_history/2026-09-21_22-39-14/exported/policy.pt"
+torchscript_policy = "logs/rsl_rl/bpx_rough_history_asymmetric/2026-09-23_11-17-22/exported/policy.pt"
 
 [simulation]
 # 与训练日志 params/env.yaml 一致：200 Hz 物理仿真、50 Hz 策略。
@@ -49,9 +49,10 @@ default_joint_position = [
 ]
 
 [observation]
-# [base_lin_vel(3), base_ang_vel(3), projected_gravity(3), command(3),
+# Actor only: [base_ang_vel(3), projected_gravity(3), command(3),
 #  joint_pos_rel(12), joint_vel_rel(12), last_action(12)]
-dimension = 480
+dimension = 450
+include_base_lin_vel = false
 action_dimension = 12
 history_length = 10
 

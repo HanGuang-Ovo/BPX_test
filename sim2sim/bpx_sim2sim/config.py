@@ -72,6 +72,7 @@ class ObservationConfig:
     dimension: int
     action_dimension: int
     history_length: int = 1
+    include_base_lin_vel: bool = True
 
     @property
     def frame_dimension(self) -> int:
@@ -267,6 +268,7 @@ def load_config(path: str | Path, repository_root: str | Path | None = None) -> 
             dimension=int(observation["dimension"]),
             action_dimension=int(observation["action_dimension"]),
             history_length=int(observation.get("history_length", 1)),
+            include_base_lin_vel=observation.get("include_base_lin_vel", True),
         ),
         command=CommandConfig(
             linear_x=float(command["linear_x"]),
@@ -378,10 +380,13 @@ def load_config(path: str | Path, repository_root: str | Path | None = None) -> 
         raise ValueError("supervisor.init_tilt 必须小于 fall_tilt")
     if cfg.observation.history_length < 1:
         raise ValueError("observation.history_length 必须为正整数")
-    expected_observation_dimension = (12 + 3 * len(cfg.joint_names)) * cfg.observation.history_length
+    if not isinstance(cfg.observation.include_base_lin_vel, bool):
+        raise ValueError("observation.include_base_lin_vel 必须为布尔值")
+    base_width = 12 if cfg.observation.include_base_lin_vel else 9
+    expected_observation_dimension = (base_width + 3 * len(cfg.joint_names)) * cfg.observation.history_length
     if cfg.observation.dimension != expected_observation_dimension:
         raise ValueError(
-            f"观测维度应为 (12 + 3 * 关节数) * history_length = {expected_observation_dimension}，"
+            f"观测维度应为 ({base_width} + 3 * 关节数) * history_length = {expected_observation_dimension}，"
             f"实际配置为 {cfg.observation.dimension}"
         )
     if cfg.observation.action_dimension != len(cfg.joint_names):

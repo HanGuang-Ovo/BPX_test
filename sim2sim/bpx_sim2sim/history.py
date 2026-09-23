@@ -10,11 +10,13 @@ class ObservationHistory:
     matching ObservationGroupCfg(history_length=H, flatten_history_dim=True).
     """
 
-    def __init__(self, length: int, joint_count: int = 12):
+    def __init__(self, length: int, joint_count: int = 12, include_base_lin_vel: bool = True):
         if length < 1:
             raise ValueError("history length must be positive")
         self.length = length
-        self.widths = (3, 3, 3, 3, joint_count, joint_count, joint_count)
+        self.widths = (3, 3, 3, joint_count, joint_count, joint_count)
+        if include_base_lin_vel:
+            self.widths = (3,) + self.widths
         self.frames = None
 
     def append(self, observation: np.ndarray) -> np.ndarray:
