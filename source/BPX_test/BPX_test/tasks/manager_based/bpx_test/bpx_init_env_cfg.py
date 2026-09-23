@@ -6,12 +6,14 @@
 """BPX 趴卧起身（Init）策略训练配置。
 
 机器人从腹部朝地、机身低位、小腿自然贴地且足端朝前的趴卧状态开始，目标是抬升到
-0.40 m 左右的四足稳定默认站姿。Init 与 locomotion、stand 继续共享 48 维观测、
-12 维动作、关节顺序和动作缩放，因此导出后可以由 sim2sim Supervisor 直接切换。
+0.40 m 左右的四足稳定默认站姿。Init 使用单帧非对称观测：Actor 45 维，不提供
+基座线速度；Critic 48 维，额外读取三轴线速度真值。12 维动作、关节顺序和
+动作缩放仍与其他策略一致，导出后由 sim2sim Supervisor 切换。
 """
 
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
+from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
@@ -31,6 +33,29 @@ INIT_TORQUE_CURRICULUM_START_SUCCESS_RATE = 0.70
 INIT_TORQUE_CURRICULUM_FULL_SUCCESS_RATE = 0.90
 INIT_TORQUE_CURRICULUM_MINIMUM_EPISODES = 4_096
 INIT_TORQUE_CURRICULUM_WINDOW_SIZE = 8_192
+
+
+@configclass
+class BpxInitObservationsCfg:
+    """单帧非对称观测：Actor 45 维，Critic 48 维。
+
+    Actor 顺序：角速度(3)、重力投影(3)、零速度指令(3)、关节位置(12)、
+    关节速度(12)、上一步动作(12)。Critic 在最前面增加机身系线速度真值(3)。
+    其余观测沿用公共配置的噪声；不增加历史帧。
+    """
+
+    @configclass
+    class PolicyCfg(BpxObservationsCfg.PolicyCfg):
+        # 删除观测项，不用零填充，避免 Actor 依赖仿真线速度。
+        base_lin_vel = None
+
+    @configclass
+    class CriticCfg(BpxObservationsCfg.PolicyCfg):
+        # Critic 独有的三轴线速度 [vx, vy, vz]，不加观测噪声。
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+
+    policy: PolicyCfg = PolicyCfg()
+    critic: CriticCfg = CriticCfg()
 
 
 @configclass
@@ -265,6 +290,13 @@ class BpxInitRewardsCfg:
         },
     )
 
+    # 低位允许调整支撑；随高度从 0.18 m 升至 0.36 m，逐步抑制世界系 x、y 方向漂移。
+    base_lin_vel_xy_progress_l2 = RewTerm(
+        func=mdp.base_lin_vel_xy_progress_l2,
+        weight=-0.5,
+        params={"start_height": 0.18, "target_height": 0.36},
+    )
+
     # 只惩罚超过上限的世界系向上速度，限制快速弹起而不强迫策略跟踪固定速度。
     base_upward_velocity_limit_l2 = RewTerm(
         func=mdp.base_upward_velocity_limit_l2,
@@ -349,7 +381,7 @@ class BpxInitEnvCfg(BpxBaseEnvCfg):
     """可注册并训练的 BPX 趴卧起身环境。"""
 
     commands: BpxInitCommandsCfg = BpxInitCommandsCfg()
-    observations: BpxObservationsCfg = BpxObservationsCfg()
+    observations: BpxInitObservationsCfg = BpxInitObservationsCfg()
     rewards: BpxInitRewardsCfg = BpxInitRewardsCfg()
     terminations: BpxInitTerminationsCfg = BpxInitTerminationsCfg()
     events: BpxInitEventCfg = BpxInitEventCfg()

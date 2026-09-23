@@ -84,6 +84,26 @@ class OnnxPolicy:
         return _validate_action(action, self.action_dimension)
 
 
+class SingleFrameOnnxPolicy(OnnxPolicy):
+    """将完整单帧观测适配到 48 维旧专家或 45 维无基座线速度专家。"""
+
+    def __init__(self, path: Path, observation_dimension: int, action_dimension: int):
+        super().__init__(path, observation_dimension, action_dimension)
+        self.full_observation_dimension = observation_dimension
+        shape = self.session.get_inputs()[0].shape
+        if len(shape) != 2 or shape[1] not in (observation_dimension, observation_dimension - 3):
+            raise ValueError(
+                f"单帧专家输入应为 {observation_dimension} 或 {observation_dimension - 3} 维，实际为 {shape}"
+            )
+        self.observation_dimension = shape[1]
+
+    def __call__(self, observation: FloatArray) -> npt.NDArray[np.float32]:
+        array = np.asarray(observation, dtype=np.float32).reshape(self.full_observation_dimension)
+        if self.observation_dimension == self.full_observation_dimension - 3:
+            array = array[3:]
+        return super().__call__(array)
+
+
 def _validate_action(action: npt.NDArray[np.float32], action_dimension: int) -> npt.NDArray[np.float32]:
     if action.shape != (action_dimension,):
         raise RuntimeError(f"策略输出维度不匹配：期望 {action_dimension}，实际 {action.shape}")

@@ -9,7 +9,7 @@ locomotion_policy = "logs/rsl_rl/bpx_rough_history_asymmetric/2026-09-23_11-17-2
 stand_policy = "logs/rsl_rl/bpx_rough_stand/2026-09-20_13-01-51/exported/policy.onnx"
 # 状态驱动版 Init：起身过程 command 槽位恒为零，由完成状态切换到 Stand。
 
-init_policy = "logs/rsl_rl/bpx_init/2026-09-17_16-52-10_stable/exported/policy.onnx"
+init_policy = "logs/rsl_rl/bpx_init/2026-09-23_22-39-00/exported/policy.onnx"
 # 保留 TorchScript 导出，供 --backend torchscript 和导出一致性检查使用。
 torchscript_policy = "logs/rsl_rl/bpx_rough_history_asymmetric/2026-09-23_11-17-22/exported/policy.pt"
 

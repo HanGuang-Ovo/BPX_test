@@ -64,6 +64,7 @@ class BpxRoughHistoryObservationsCfg:
         # 上一策略周期的动作，12 维；当前观测对应 a_(t-1)，而非待预测的 a_t。
         actions = ObsTerm(func=mdp.last_action)
 
+        # 观测历史缓存的布局：每项按声明顺序展开，再按时间顺序拼接，最旧在前，最新在后。每帧包含 450 维观测。
         def __post_init__(self):
             # 新观测入历史缓存前加噪；每项从最旧到最新展开，再按声明顺序拼接。
             self.enable_corruption = True
@@ -77,7 +78,9 @@ class BpxRoughHistoryObservationsCfg:
 
         # 唯一额外特权：机身坐标系基座线速度 [vx, vy, vz]，3 维，不加噪声。
         # 沿用 mdp.base_lin_vel 的 root_lin_vel_b 定义。
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+        base_lin_vel = ObsTerm(
+            func=mdp.base_lin_vel
+        )
         # 机身坐标系角速度，3 维；噪声与 Actor 相同。
         base_ang_vel = ObsTerm(
             func=mdp.base_ang_vel,
@@ -135,6 +138,10 @@ class BpxRoughHistoryRewardsCfg:
     正权重用于奖励，负权重用于惩罚。
     """
 
+
+    """
+    奖励
+    """
     # 水平面 x、y 方向线速度的指数跟踪奖励，误差尺度为 0.5 m/s。
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_exp,
@@ -157,20 +164,45 @@ class BpxRoughHistoryRewardsCfg:
             "threshold": 0.4,
         },
     )
+
+    """
+    惩罚
+    """
     # 惩罚竖直线速度平方，抑制机身上下跳动。
-    lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
+    lin_vel_z_l2 = RewTerm(
+        func=mdp.lin_vel_z_l2, 
+        weight=-2.0
+    )
     # 惩罚横滚、俯仰角速度平方，抑制机身快速摇摆。
-    ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+    ang_vel_xy_l2 = RewTerm(
+        func=mdp.ang_vel_xy_l2, 
+        weight=-0.05
+    )
     # 惩罚机身偏离水平姿态。
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-0.5)
+    flat_orientation_l2 = RewTerm(
+        func=mdp.flat_orientation_l2, 
+        weight=-0.5
+    )
     # 惩罚关节力矩平方，减少过大的驱动力矩。
-    dof_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1.0e-5)
+    dof_torques_l2 = RewTerm(
+        func=mdp.joint_torques_l2, 
+        weight=-1.0e-5
+    )
     # 惩罚关节加速度平方，抑制关节运动突变。
-    dof_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
+    dof_acc_l2 = RewTerm(
+        func=mdp.joint_acc_l2, 
+        weight=-2.5e-7
+    )
     # 惩罚相邻策略周期动作差的平方，使输出更平滑。
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
+    action_rate_l2 = RewTerm(
+        func=mdp.action_rate_l2, 
+        weight=-0.01
+    )
     # 惩罚关节角相对默认站姿的绝对偏差。
-    joint_deviation_l1 = RewTerm(func=mdp.joint_deviation_l1, weight=-0.05)
+    joint_deviation_l1 = RewTerm(
+        func=mdp.joint_deviation_l1, 
+        weight=-0.05
+    )
     # 惩罚机身、髋部、大腿、小腿等非足端部位的接触，力阈值为 1 N。
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts,

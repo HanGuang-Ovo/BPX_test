@@ -248,6 +248,31 @@ def base_height_exp(
     return torch.exp(-torch.square(height_error) / std**2)
 
 
+# 随起身高度逐步惩罚机身水平移动。
+def base_lin_vel_xy_progress_l2(
+    env: ManagerBasedRLEnv,
+    start_height: float,
+    target_height: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """按抬升进度惩罚世界系 x、y 线速度的平方和。
+
+    高度低于 start_height 时允许建立支撑；达到 target_height 后施加完整惩罚。
+    使用世界坐标系，避免机身倾斜时将正常竖直上升误判为水平移动。
+    返回形状为 (num_envs,) 的非负惩罚量，奖励配置应使用负权重。
+    """
+    if not math.isfinite(start_height) or not math.isfinite(target_height) or target_height <= start_height:
+        raise ValueError("start_height 和 target_height 必须是有限值，且 target_height 必须大于 start_height")
+    asset: Articulation = env.scene[asset_cfg.name]
+    height_progress = torch.clamp(
+        (asset.data.root_pos_w[:, 2] - start_height) / (target_height - start_height),
+        min=0.0,
+        max=1.0,
+    )
+    planar_velocity_l2 = torch.sum(torch.square(asset.data.root_lin_vel_w[:, :2]), dim=1)
+    return height_progress * planar_velocity_l2
+
+
 # 惩罚超过安全上限的机身向上速度。
 def base_upward_velocity_limit_l2(
     env: ManagerBasedRLEnv,
