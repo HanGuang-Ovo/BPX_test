@@ -2,7 +2,7 @@
 
 本项目基于 Isaac Lab 的管理器式强化学习环境，使用 RSL-RL 的 PPO 算法分别训练 BPX 四足机器人的行走、静止站立和趴卧起身策略，并将导出的策略部署到 MuJoCo，验证不同物理引擎中的控制表现（sim2sim）。项目现有环境说明以 Isaac Lab 2.2.1 为基线。
 
-行走、站立、起身三类策略共享机器人模型和 12 维动作接口；基线使用 48 维单帧观测，崎岖行走另提供 H=10、Actor 450 维 / Critic 480 维的非对称历史观测版本。行走和站立分别提供平地与崎岖地形训练任务。MuJoCo 端通过上层状态机（Supervisor）选择策略，支持手柄速度指令、起身触发、停止过渡、动作平滑和 CSV 日志记录。
+行走、站立、起身三类策略共享机器人模型和 12 维动作接口。平地与崎岖站立、崎岖行走历史版均使用 H=10、Actor 450 维 / Critic 480 维的非对称历史观测；其他基线任务仍使用单帧观测。行走和站立分别提供平地与崎岖地形训练任务。MuJoCo 端通过上层状态机（Supervisor）选择策略，支持手柄速度指令、起身触发、停止过渡、动作平滑和 CSV 日志记录。
 
 ## 任务与功能
 
@@ -139,7 +139,7 @@ python scripts/rsl_rl/train.py \
 
 ### 从平地策略微调崎岖地形策略
 
-两个崎岖任务均采用 ±0.5～±4 cm 的 8 级起伏地形，保持原有单帧观测和动作接口，不向策略输入地形高度。
+两个崎岖任务均采用 ±0.5～±4 cm 的 8 级起伏地形，保持 12 维动作接口，不向策略输入地形高度。崎岖站立使用与平地站立相同的 10 帧非对称历史观测。
 
 | 任务 | 重置位置 | 难度课程 | 奖励 |
 | --- | --- | --- | --- |
@@ -148,7 +148,7 @@ python scripts/rsl_rl/train.py \
 
 站立每回合 15 秒，排除前 0.5 秒落脚期后，稳定时间占比和四足同时接触占比均须达到 90%；reset 会扰动机身姿态、初速度、关节位置及关节速度。平地和低等级回放样本不参与升级。地面高度查询仅用于仿真重置与奖励，不增加策略观测或实机传感器需求。
 
-以下为本机已有平地检查点的微调示例；其他机器需替换为实际文件路径：
+崎岖行走可从相同观测维度的平地行走检查点微调；新 Stand 观测维度已改变，需从头训练：
 
 ```bash
 # 崎岖行走
@@ -157,10 +157,9 @@ python scripts/rsl_rl/train.py \
     --checkpoint logs/rsl_rl/bpx_locomotion/2026-09-15_13-15-43_stable/model_4999.pt \
     --max_iterations 1500
 
-# 崎岖站立
+# 崎岖站立（从头训练）
 python scripts/rsl_rl/train.py \
-    --task BPX-Stand-Rough-v0 --num_envs 512 --headless --resume \
-    --checkpoint logs/rsl_rl/bpx_stand/2026-09-15_00-13-24_stable/model_499.pt \
+    --task BPX-Stand-Rough-v0 --num_envs 512 --headless \
     --max_iterations 1500
 
 # H=10 历史观测崎岖行走（从头训练，不能 resume 48 维检查点）
@@ -168,7 +167,7 @@ python scripts/rsl_rl/train.py \
     --task BPX-Locomotion-Rough-History-v0 --num_envs 2048 --headless
 ```
 
-`--resume --checkpoint` 加载训练状态，不是导出模型。`--max_iterations` 表示本次继续训练的迭代数；新日志分别写入 `bpx_rough` 和 `bpx_rough_stand`。PPO 检查点不保存地形课程状态，恢复训练后课程从最低级开始。
+`--resume --checkpoint` 加载训练状态，不是导出模型。旧版 48 维 Stand checkpoint 不能恢复到新的 450/480 维 Stand 任务。`--max_iterations` 控制训练迭代数；新日志分别写入 `bpx_rough` 和 `bpx_rough_stand`。PPO 检查点不保存地形课程状态，恢复训练后课程从最低级开始。
 
 详细参数与评估方法见 [崎岖行走训练](ROUGH_TERRAIN_TRAINING.md) 和 [崎岖站立训练](ROUGH_STAND_TRAINING.md)。需要检查实现时可运行：
 
@@ -233,7 +232,7 @@ python scripts/rsl_rl/play.py \
 | [bpx_terrain_standing.toml](sim2sim/config/bpx_terrain_standing.toml) | 三级起伏地形 / 站姿 | 直接测试行走策略；文件名中的 standing 指初始姿态 |
 | [bpx_terrain_history.toml](sim2sim/config/bpx_terrain_history.toml) | 三级起伏地形 / 趴姿 | H=10 历史观测行走策略验证，配合 `--supervisor --auto-init` 无手柄起身 |
 
-编辑实际传给 `--config` 的文件的 `[paths]`，将 `locomotion_policy`、`stand_policy`、`init_policy` 指向各自导出的 `policy.onnx`；使用 TorchScript 时同时更新 `torchscript_policy`。
+编辑实际传给 `--config` 的文件的 `[paths]`，将 `locomotion_policy`、`stand_policy`、`init_policy` 指向各自导出的 `policy.onnx`；使用 TorchScript 时同时更新 `torchscript_policy`。新 Stand 模型输入 450 维，部署端会按 ONNX 输入形状构造历史；现有 48/45 维 Stand 模型仍可加载，但不代表已采用新观测训练。
 
 配置中的相对路径均相对于项目根目录解析。默认文件记录了具体实验目录，且 `logs/` 被 Git 忽略，因此这些检查点不保证随代码仓库提供，也不会自动切换到新训练的模型。
 
@@ -380,3 +379,4 @@ pre-commit run --all-files
 - [ ] 尝试使用HIMloco框架实现对比差距
 - [ ] 参考RMA论文尝试历史信息编码器
 - [ ] 完善域随机化（视sim2real情况）
+- [ ] 尝试教师学生蒸馏：第一轮PPO训练时，直接加入特权信息作为教师网络，Critic和Actor都给特权信息不给历史观测，第二轮蒸馏student时再不给特权信息，只给历史观测

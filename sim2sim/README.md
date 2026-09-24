@@ -27,6 +27,8 @@ python -c "import mujoco, onnxruntime; print(mujoco.__version__, onnxruntime.__v
 | `init_policy` | Supervisor 可选起身 ONNX 策略 |
 | `torchscript_policy` | TorchScript 主策略及导出对比模型 |
 
+新 Stand ONNX 使用 450 维 Actor 历史输入，部署端会按模型输入形状自动构造；旧版 48/45 维 Stand ONNX 仍支持单帧输入。Init 保持单帧输入。
+
 相对路径以项目根目录解析。默认路径指向具体实验，不会自动选择最新模型；`logs/` 被 Git 忽略，模型不保证随仓库提供。默认 ONNX 与 TorchScript 主策略路径可能来自不同实验，做一致性检查前必须指向**同一个检查点**的两种导出。
 
 ## 2. 先检查模型和 PD

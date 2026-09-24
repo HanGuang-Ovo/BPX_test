@@ -21,6 +21,7 @@ def main():
     cfg, flat = BpxRoughStandEnvCfg(), BpxStandEnvCfg()
     observations = cfg.observations.to_dict()
     observations['policy']['actions'] = flat.observations.to_dict()['policy']['actions']
+    observations['critic']['actions'] = flat.observations.to_dict()['critic']['actions']
     assert observations == flat.observations.to_dict()
     assert cfg.actions.to_dict() == flat.actions.to_dict()
     assert cfg.commands.to_dict() == flat.commands.to_dict()
@@ -39,7 +40,8 @@ def main():
     env = gym.make('BPX-Stand-Rough-v0', cfg=cfg).unwrapped
     try:
         obs, _ = env.reset()
-        assert obs['policy'].shape == (4, 48)
+        assert obs['policy'].shape == (4, 450)
+        assert obs['critic'].shape == (4, 480)
         assert torch.all(env.command_manager.get_command('base_velocity') == 0)
         ids = torch.arange(4, device=env.device)
         terrain, tracker = env.scene.terrain, env._bpx_stand_stability
@@ -152,7 +154,7 @@ def main():
             obs, reward, _, _, _ = env.step(torch.zeros((4, 12), device=env.device))
             assert torch.isfinite(obs['policy']).all() and torch.isfinite(reward).all()
         print(
-            'PASS: 48-D interface, stratified/handoff reset, four-foot, symmetry and '
+            'PASS: 450/480-D observations, stratified/handoff reset, four-foot, symmetry and '
             'support-center curriculum, relative height, drift failure, physics steps',
             flush=True,
         )

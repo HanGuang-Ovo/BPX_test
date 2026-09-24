@@ -104,6 +104,30 @@ class SingleFrameOnnxPolicy(OnnxPolicy):
         return super().__call__(array)
 
 
+class StandOnnxPolicy(OnnxPolicy):
+    """Accept legacy single-frame Stand models and the 10-frame 450-D Actor."""
+
+    def __init__(self, path: Path, frame_dimension: int, action_dimension: int):
+        super().__init__(path, frame_dimension, action_dimension)
+        shape = self.session.get_inputs()[0].shape
+        history_dimension = (frame_dimension - 3) * 10
+        if len(shape) != 2 or shape[1] not in (frame_dimension, frame_dimension - 3, history_dimension):
+            raise ValueError(
+                f"Stand 输入应为 {frame_dimension}、{frame_dimension - 3} 或 {history_dimension} 维，实际为 {shape}"
+            )
+        self.full_frame_dimension = frame_dimension
+        self.observation_dimension = shape[1]
+        self.uses_history = shape[1] == history_dimension
+
+    def __call__(self, observation: FloatArray) -> npt.NDArray[np.float32]:
+        if self.uses_history:
+            return super().__call__(observation)
+        array = np.asarray(observation, dtype=np.float32).reshape(self.full_frame_dimension)
+        if self.observation_dimension == self.full_frame_dimension - 3:
+            array = array[3:]
+        return super().__call__(array)
+
+
 def _validate_action(action: npt.NDArray[np.float32], action_dimension: int) -> npt.NDArray[np.float32]:
     if action.shape != (action_dimension,):
         raise RuntimeError(f"策略输出维度不匹配：期望 {action_dimension}，实际 {action.shape}")

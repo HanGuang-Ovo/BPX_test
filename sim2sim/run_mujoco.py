@@ -21,7 +21,7 @@ from bpx_sim2sim.gamepad import (
     enumerate_gamepads,
     select_gamepad,
 )
-from bpx_sim2sim.policy import SingleFrameOnnxPolicy, create_policy
+from bpx_sim2sim.policy import SingleFrameOnnxPolicy, StandOnnxPolicy, create_policy
 from bpx_sim2sim.runner import Sim2SimRunner
 from bpx_sim2sim.supervisor import BehaviorSupervisor
 
@@ -112,7 +112,7 @@ def load_optional_policy(
     path: Path | None,
     observation_dimension: int,
     action_dimension: int,
-) -> SingleFrameOnnxPolicy | None:
+) -> SingleFrameOnnxPolicy | StandOnnxPolicy | None:
     """加载 Supervisor 的可选 ONNX 策略，路径为空或文件缺失时安全回退。
 
     locomotion 是主策略，缺少时无法继续运行；stand/init 则是增量加入的专家策略。
@@ -130,7 +130,8 @@ def load_optional_policy(
             file=sys.stderr,
         )
         return None
-    return SingleFrameOnnxPolicy(resolved_path, observation_dimension, action_dimension)
+    policy_type = StandOnnxPolicy if name == "stand" else SingleFrameOnnxPolicy
+    return policy_type(resolved_path, observation_dimension, action_dimension)
 
 
 def main() -> int:

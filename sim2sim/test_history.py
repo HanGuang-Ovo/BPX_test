@@ -59,6 +59,53 @@ class HistoryTest(unittest.TestCase):
         for value in policy.inputs[1:]:
             np.testing.assert_array_equal(value, policy.inputs[0])
 
+    def test_stand_history_omits_velocity_and_zeros_commands(self):
+        cfg = load_config(Path(__file__).parent / 'config/bpx_terrain_history.toml')
+        walk = RecordingPolicy(450, 0)
+        stand = RecordingPolicy(450, 0)
+        stand.uses_history = True
+        supervisor = Mock()
+        supervisor.update.return_value = SupervisorDecision(
+            BehaviorMode.STAND, np.zeros(3, dtype=np.float32), True, 'test'
+        )
+        runner = Sim2SimRunner(cfg, walk, supervisor, BehaviorPolicies(walk, stand))
+        frames = [np.arange(48, dtype=np.float32) + 100 * i for i in range(3)]
+        for i, frame in enumerate(frames):
+            frame[:3] = 1000 * (i + 1)
+            frame[9:12] = [1, 2, 3]
+        with patch.object(runner.robot, 'observation', side_effect=frames):
+            runner.run((0, 0, 0), duration=.05, realtime=False, print_interval=100)
+        self.assertEqual(len(stand.inputs), 3)
+        expected = ObservationHistory(10, include_base_lin_vel=False)
+        for actual, frame in zip(stand.inputs, frames):
+            stand_frame = frame[3:].copy()
+            stand_frame[6:9] = 0
+            np.testing.assert_array_equal(actual, expected.append(stand_frame))
+        np.testing.assert_array_equal(stand.inputs[0][:30], np.tile(frames[0][3:6], 10))
+        np.testing.assert_array_equal(stand.inputs[-1][60:90], 0)
+
+    def test_stand_history_restarts_after_walk_with_flat_locomotion(self):
+        cfg = load_config(Path(__file__).parent / 'config/bpx_flat.toml')
+        walk = RecordingPolicy(48, 0)
+        stand = RecordingPolicy(450, 0)
+        stand.uses_history = True
+        supervisor = Mock()
+        supervisor.update.side_effect = [
+            SupervisorDecision(mode, np.zeros(3, dtype=np.float32), True, 'test')
+            for mode in (BehaviorMode.STAND, BehaviorMode.WALK, BehaviorMode.STAND)
+        ]
+        runner = Sim2SimRunner(cfg, walk, supervisor, BehaviorPolicies(walk, stand))
+        frames = [np.arange(48, dtype=np.float32) + 100 * i for i in range(3)]
+        with patch.object(runner.robot, 'observation', side_effect=frames):
+            runner.run((0, 0, 0), duration=.05, realtime=False, print_interval=100)
+        self.assertEqual(len(walk.inputs), 1)
+        self.assertEqual(len(stand.inputs), 2)
+        for actual, frame in zip(stand.inputs, (frames[0], frames[2])):
+            stand_frame = frame[3:].copy()
+            stand_frame[6:9] = 0
+            expected = ObservationHistory(10, include_base_lin_vel=False).append(stand_frame)
+            np.testing.assert_array_equal(actual, expected)
+
     def test_viewer_displays_loaded_paths_and_active_policy(self):
         cfg = load_config(Path(__file__).parent / 'config/bpx_terrain_history.toml')
         walk = RecordingPolicy(450, 0)

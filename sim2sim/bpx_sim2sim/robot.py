@@ -194,7 +194,7 @@ class BpxMujocoRobot:
                 np.asarray(last_action, dtype=np.float64),
             )
         ).astype(np.float32)
-        # Preserve full frames for Stand/Init; the runner filters locomotion input.
+        # Preserve full frames; the runner selects each policy’s observation layout.
         full_dimension = 12 + 3 * len(self.config.joint_names)
         if observation.shape != (full_dimension,):
             raise RuntimeError(

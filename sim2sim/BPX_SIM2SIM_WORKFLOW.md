@@ -120,7 +120,7 @@ python sim2sim/run_mujoco.py \
     --supervisor --duration 120
 ```
 
-站立和 Init 任务中的三维 command 都恒为零。平地行走和站立 Actor 为 48 维；Init 使用单帧非对称观测，Actor 删除三轴基座线速度后为 45 维，Critic 为 48 维且线速度无噪声。Init 需要重新训练，旧 48 维 Actor 检查点不能直接恢复到新网络。Supervisor 的可选 ONNX 专家加载器自动识别 45/48 维；45 维模型接收公共单帧观测的 `[3:]`，旧 48 维模型接收完整观测。
+站立和 Init 任务中的三维 command 都恒为零。平地行走 Actor 为 48 维单帧；平地与崎岖站立 Actor 为 450 维（10 帧，每帧删除机身线速度），Critic 为 480 维（含线速度真值）。Init 使用单帧非对称观测，Actor 为 45 维，Critic 为 48 维且线速度无噪声。新 Stand 与 Init 都需要重新训练，旧 48 维 Actor 检查点不能恢复到新网络。Supervisor 的 Stand ONNX 加载器识别 450/48/45 维输入；Init 加载器识别 45/48 维输入。
 Init 不再跟踪固定时长的高度与竖直速度轨迹，而是用实际抬升进度、关节接近默认站姿程度
 和足端接触比例提供连续奖励。前足机体系横向宽度必须至少达到 `0.24 m`，否则不能获得
 `recovered` 与 `recovered_stability`；抬升后还会逐步启用髋横滚站姿奖励和足端滑动
@@ -601,7 +601,7 @@ command 阈值先分别除以训练满量程 `[1.0, 0.5, 1.0]`，再取三个分
 
 三种行为策略路径统一写在 `config/bpx_flat.toml` 的 `[paths]`。Supervisor 启用时自动
 检查并加载；可选文件不存在只打印 warning。没有 stand 时 STAND 复用零 command 的
-locomotion，没有 Init 时未站立状态进入 DISABLED。单帧专用策略支持公共 48 维观测或删除前三维线速度的 45 维观测；
+locomotion，没有 Init 时未站立状态进入 DISABLED。Stand 支持 450 维历史 Actor 输入和旧版 48/45 维单帧输入；Init 支持 48/45 维单帧输入；
 仍须遵守 12 维动作、关节顺序、默认角和 `action_scale=0.5` 的共同接口契约。
 由于当前 Init 只学习腹部朝地的水平趴卧姿态，Supervisor 还要求起始倾角小于
 `init_start_max_tilt=0.35 rad`；侧翻和仰翻不会送入这个超出训练分布的策略。

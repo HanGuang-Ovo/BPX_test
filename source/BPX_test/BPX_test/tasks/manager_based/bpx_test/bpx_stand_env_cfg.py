@@ -5,20 +5,48 @@
 
 """BPX 静止站立策略训练配置。
 
-站立策略仍保留 3 维速度 command 输入，但训练中 command 始终为零。这样导出的
-policy 与 locomotion policy 具有完全相同的观测/动作接口，可由 supervisor 直接切换。
+站立策略保留恒为零的 3 维速度 command。Actor 使用不含机身线速度的 10 帧历史，
+Critic 使用额外包含线速度真值的 10 帧历史；动作接口与其他策略一致。
 """
 
 import math
 
 from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils import configclass
 
 from . import mdp
-from .bpx_base_env_cfg import BpxBaseEnvCfg, BpxCommonEventCfg
+from .bpx_base_env_cfg import BpxBaseEnvCfg, BpxCommonEventCfg, BpxObservationsCfg
+
+
+@configclass
+class BpxStandObservationsCfg:
+    """按观测项展开历史：Actor 450 维，Critic 480 维。"""
+
+    @configclass
+    class PolicyCfg(BpxObservationsCfg.PolicyCfg):
+        base_lin_vel = None
+
+        def __post_init__(self) -> None:
+            super().__post_init__()
+            self.history_length = 10
+            self.flatten_history_dim = True
+
+    @configclass
+    class CriticCfg(BpxObservationsCfg.PolicyCfg):
+        # Critic 独有的机身系三轴线速度真值，不注入观测噪声。
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+
+        def __post_init__(self) -> None:
+            super().__post_init__()
+            self.history_length = 10
+            self.flatten_history_dim = True
+
+    policy: PolicyCfg = PolicyCfg()
+    critic: CriticCfg = CriticCfg()
 
 
 @configclass
@@ -148,6 +176,7 @@ class BpxStandEnvCfg(BpxBaseEnvCfg):
     """可注册并训练的 BPX 静止站立环境。"""
 
     commands: BpxStandCommandsCfg = BpxStandCommandsCfg()
+    observations: BpxStandObservationsCfg = BpxStandObservationsCfg()
     rewards: BpxStandRewardsCfg = BpxStandRewardsCfg()
     terminations: BpxStandTerminationsCfg = BpxStandTerminationsCfg()
     events: BpxStandEventCfg = BpxStandEventCfg()

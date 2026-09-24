@@ -1,3 +1,4 @@
+# 模型加载路径
 [paths]
 mjcf = "source/BPX_test/BPX_test/BPX_structure/mjcf/bpx.xml"
 # 三种行为策略统一使用 ONNX；Supervisor 启用后会自动读取站立和 Init 策略。
@@ -10,6 +11,7 @@ init_policy = "logs/rsl_rl/bpx_init/2026-09-17_16-52-10_stable/exported/policy.o
 # 保留 TorchScript 导出，供 --backend torchscript 和导出一致性检查使用。
 torchscript_policy = "logs/rsl_rl/bpx_flat/2026-09-08_11-28-30/exported/policy.pt"
 
+# 仿真配置
 [simulation]
 # 与训练日志 params/env.yaml 一致：200 Hz 物理仿真、50 Hz 策略。
 timestep = 0.005
@@ -18,6 +20,7 @@ duration = 20.0
 realtime = true
 integrator = "euler"
 
+# --- 物理参数 ---
 [control]
 # Isaac Lab JointPositionActionCfg 与 ImplicitActuatorCfg 的名义参数。
 mode = "explicit"
@@ -27,6 +30,7 @@ damping = 1.0
 torque_limit = 30.0
 velocity_limit = 20.0
 
+# --- 初始化状态 ---
 [initial_state]
 base_position = [0.0, 0.0, 0.133]
 base_quaternion_wxyz = [1.0, 0.0, 0.0, 0.0]

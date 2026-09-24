@@ -225,6 +225,7 @@ class Sim2SimRunner:
         run_duration = self.config.simulation.duration if duration is None else duration
         use_realtime = self.config.simulation.realtime if realtime is None else realtime
         self.robot.reset()
+        stand_history: ObservationHistory | None = None
         history = ObservationHistory(
             self.config.observation.history_length,
             len(self.config.joint_names),
@@ -309,6 +310,7 @@ class Sim2SimRunner:
                         selected_policy = self.behavior_policies.resolve(decision.mode)
                         behavior_policy = self.behavior_policies.policy_name(decision.mode)
                         if selected_policy is not active_policy:
+                            stand_history = None
                             # 策略对象真正变化时才重新开始混合；WALK→STOPPING 仍使用 locomotion，
                             # 因此只平滑 command，不会无意义地重复启动 action 混合。
                             action_blender.start(action)
@@ -319,13 +321,23 @@ class Sim2SimRunner:
                     )
                     if active_policy is None:
                         raise RuntimeError("没有可执行的 behavior policy")
-                    # Keep history alive through Stand/Init and action blending. Only the
-                    # locomotion policy consumes it; the other experts remain single-frame.
+                    # Locomotion history continues through every mode so switching back to
+                    # WALK preserves the actions actually sent to the robot.
                     locomotion_frame = observation if self.config.observation.include_base_lin_vel else observation[3:]
                     history_observation = history.append(locomotion_frame)
                     if self.supervisor is None or active_policy is self.behavior_policies.locomotion:
-                        observation = history_observation
-                    policy_action = np.asarray(active_policy(observation), dtype=np.float32)
+                        policy_observation = history_observation
+                    elif active_policy is self.behavior_policies.stand and getattr(active_policy, "uses_history", False):
+                        # A new Stand episode starts with the first frame repeated, as in
+                        # Isaac Lab. Stand commands are always zero, including its history.
+                        if stand_history is None:
+                            stand_history = ObservationHistory(10, len(self.config.joint_names), False)
+                        stand_frame = observation[3:].copy()
+                        stand_frame[6:9] = 0.0
+                        policy_observation = stand_history.append(stand_frame)
+                    else:
+                        policy_observation = observation
+                    policy_action = np.asarray(active_policy(policy_observation), dtype=np.float32)
                     if self.supervisor is None:
                         action = policy_action
                     else:

@@ -13,6 +13,7 @@ from isaaclab.utils import configclass
 from . import mdp
 from .bpx_base_env_cfg import BPX_POLICY_JOINT_NAMES, BpxBaseEnvCfg, BpxCommonEventCfg
 from .bpx_rough_env_cfg import BpxWaveTerrainCfg
+from .bpx_stand_env_cfg import BpxStandObservationsCfg
 from .mdp.rough_stand import (
     reset_rough_stand, reset_rough_stand_joints, rough_stand_last_action,
     relative_stand_height_l2, StandStability, StandingCurriculum,
@@ -23,7 +24,7 @@ BPX_FOOT_NAMES = ["fl_toe_link", "fr_toe_link", "hl_toe_link", "hr_toe_link"]
 
 
 @configclass
-# 崎岖站立指令：恒为零的占位速度指令（与平地站立一致），保持 48 维观测接口不变
+# 崎岖站立指令：恒为零的占位速度指令（与平地站立一致），与平地站立的历史观测一致
 class RoughStandCommandsCfg:
     base_velocity = mdp.UniformVelocityCommandCfg(
         asset_name="robot",
@@ -244,9 +245,10 @@ class RoughStandCurriculumCfg:
 
 
 @configclass
-# 崎岖站立环境配置：只继承公共基类 BpxBaseEnvCfg（机器人 USD、48 维观测、12 维动作等
-# 接口契约），不再依赖平地站立任务文件；指令、事件、奖励、终止、课程全部在本文件显式定义。
+# 崎岖站立环境配置：只继承公共基类 BpxBaseEnvCfg（机器人 USD、12 维动作等
+# 接口契约）；与平地站立共用历史观测，其余指令、事件、奖励、终止和课程在本文件定义。
 class BpxRoughStandEnvCfg(BpxBaseEnvCfg):
+    observations: BpxStandObservationsCfg = BpxStandObservationsCfg()
     commands: RoughStandCommandsCfg = RoughStandCommandsCfg()
     rewards: RoughStandRewardsCfg = RoughStandRewardsCfg()
     terminations: RoughStandTerminationsCfg = RoughStandTerminationsCfg()
@@ -267,4 +269,5 @@ class BpxRoughStandEnvCfg(BpxBaseEnvCfg):
         )
         # 交接后首帧的"上一动作"观测用合成动作替换（配合 reset_rough_stand_joints）
         self.observations.policy.actions.func = rough_stand_last_action
+        self.observations.critic.actions.func = rough_stand_last_action
         self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
