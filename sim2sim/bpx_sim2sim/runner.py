@@ -247,6 +247,7 @@ class Sim2SimRunner:
             len(self.config.joint_names),
             include_base_lin_vel=self.config.observation.include_base_lin_vel,
         )
+        stand_history: ObservationHistory | None = None
         if self.supervisor is None:
             action = np.zeros(self.config.observation.action_dimension, dtype=np.float32)
         else:
@@ -351,6 +352,7 @@ class Sim2SimRunner:
                         selected_policy = self.behavior_policies.resolve(decision.mode)
                         behavior_policy = self.behavior_policies.policy_name(decision.mode)
                         if selected_policy is not active_policy:
+                            stand_history = None
                             # 策略对象真正变化时才重新开始混合；WALK→STOPPING 仍使用 locomotion，
                             # 因此只平滑 command，不会无意义地重复启动 action 混合。
                             action_blender.start(action)
@@ -365,13 +367,21 @@ class Sim2SimRunner:
                     )
                     if active_policy is None:
                         raise RuntimeError("没有可执行的 behavior policy")
-                    # Keep history alive through Stand/Init and action blending. Only the
-                    # locomotion policy consumes it; the other experts remain single-frame.
+                    # 行走历史在所有模式持续更新，保留实际施加的上一动作。
                     locomotion_frame = observation if self.config.observation.include_base_lin_vel else observation[3:]
                     history_observation = history.append(locomotion_frame)
                     if self.supervisor is None or active_policy is self.behavior_policies.locomotion:
-                        observation = history_observation
-                    policy_action = np.asarray(active_policy(observation), dtype=np.float32)
+                        policy_observation = history_observation
+                    elif active_policy is self.behavior_policies.stand and getattr(active_policy, "uses_history", False):
+                        # 每次进入 Stand 都开始新历史，首帧重复填满；Stand 指令恒为零。
+                        if stand_history is None:
+                            stand_history = ObservationHistory(10, len(self.config.joint_names), False)
+                        stand_frame = observation[3:].copy()
+                        stand_frame[6:9] = 0.0
+                        policy_observation = stand_history.append(stand_frame)
+                    else:
+                        policy_observation = observation
+                    policy_action = np.asarray(active_policy(policy_observation), dtype=np.float32)
                     if self.supervisor is None or isinstance(active_policy, FootTrajectoryInit):
                         action = policy_action
                         transition_alpha = 1.0

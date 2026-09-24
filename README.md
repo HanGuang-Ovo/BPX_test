@@ -2,7 +2,7 @@
 
 本项目基于 Isaac Lab 的管理器式强化学习环境，使用 RSL-RL 的 PPO 算法分别训练 BPX 四足机器人的行走、静止站立和趴卧起身策略，并将导出的策略部署到 MuJoCo，验证不同物理引擎中的控制表现（sim2sim）。项目现有环境说明以 Isaac Lab 2.2.1 为基线。
 
-行走、站立、起身三类策略共享机器人模型和 12 维动作接口；基线使用 48 维单帧观测，崎岖行走另提供 H=10、Actor 450 维 / Critic 480 维的非对称历史观测版本。行走和站立分别提供平地与崎岖地形训练任务。MuJoCo 端通过上层状态机（Supervisor）选择策略，支持手柄速度指令、起身触发、停止过渡、动作平滑和 CSV 日志记录。
+行走、站立、起身三类策略共享机器人模型和 12 维动作接口；行走基线与 Init 使用 48 维单帧观测；站立任务及崎岖行走历史任务使用 H=10、Actor 450 维 / Critic 480 维的非对称历史观测。行走和站立分别提供平地与崎岖地形训练任务。MuJoCo 端通过上层状态机（Supervisor）选择策略，支持手柄速度指令、起身触发、停止过渡、动作平滑和 CSV 日志记录。
 
 ## 任务与功能
 
@@ -157,10 +157,9 @@ python scripts/rsl_rl/train.py \
     --checkpoint logs/rsl_rl/bpx_locomotion/2026-09-15_13-15-43_stable/model_4999.pt \
     --max_iterations 1500
 
-# 崎岖站立
+# 崎岖站立（H=10，旧 48 维检查点不能恢复）
 python scripts/rsl_rl/train.py \
-    --task BPX-Stand-Rough-v0 --num_envs 512 --headless --resume \
-    --checkpoint logs/rsl_rl/bpx_stand/2026-09-15_00-13-24_stable/model_499.pt \
+    --task BPX-Stand-Rough-v0 --num_envs 512 --headless \
     --max_iterations 1500
 
 # H=10 历史观测崎岖行走（从头训练，不能 resume 48 维检查点）
@@ -168,7 +167,7 @@ python scripts/rsl_rl/train.py \
     --task BPX-Locomotion-Rough-History-v0 --num_envs 2048 --headless
 ```
 
-`--resume --checkpoint` 加载训练状态，不是导出模型。`--max_iterations` 表示本次继续训练的迭代数；新日志分别写入 `bpx_rough` 和 `bpx_rough_stand`。PPO 检查点不保存地形课程状态，恢复训练后课程从最低级开始。
+`--resume --checkpoint` 加载训练状态，不是导出模型；只用于输入维度相同的检查点。`--max_iterations` 表示本次训练的迭代数；新日志分别写入 `bpx_rough` 和 `bpx_rough_stand`。PPO 检查点不保存地形课程状态，恢复训练后课程从最低级开始。
 
 详细参数与评估方法见 [崎岖行走训练](ROUGH_TERRAIN_TRAINING.md) 和 [崎岖站立训练](ROUGH_STAND_TRAINING.md)。需要检查实现时可运行：
 
@@ -231,7 +230,7 @@ python scripts/rsl_rl/play.py \
 | [bpx_flat.toml](sim2sim/config/bpx_flat.toml) | 平地 / 趴姿 | 平地手柄起身与多策略测试 |
 | [bpx_terrain.toml](sim2sim/config/bpx_terrain.toml) | 三级起伏地形 / 趴姿 | 手柄 RB 起身、崎岖行走与站立切换 |
 | [bpx_terrain_standing.toml](sim2sim/config/bpx_terrain_standing.toml) | 三级起伏地形 / 站姿 | 直接测试行走策略；文件名中的 standing 指初始姿态 |
-| [bpx_terrain_history.toml](sim2sim/config/bpx_terrain_history.toml) | 三级起伏地形 / 趴姿 | H=10 历史观测行走策略验证，配合 `--supervisor --auto-init` 无手柄起身 |
+| [bpx_terrain_history.toml](sim2sim/config/bpx_terrain_history.toml) | 三级起伏地形 / 趴姿 | H=10 历史观测行走和崎岖站立策略验证，配合 `--supervisor --auto-init` 无手柄起身 |
 
 编辑实际传给 `--config` 的文件的 `[paths]`，将 `locomotion_policy`、`stand_policy`、`init_policy` 指向各自导出的 `policy.onnx`；使用 TorchScript 时同时更新 `torchscript_policy`。
 
@@ -272,7 +271,7 @@ Supervisor 使用指令变化率限制、切换迟滞、稳定时间确认和动
 
 测试场依次为平地、轻微起伏（±2 cm）、较大起伏（±4 cm），带区域标签和平坦返回通道。地形振幅在 [terrain.py](sim2sim/bpx_sim2sim/terrain.py) 的 `MILD_AMPLITUDE`、`MODERATE_AMPLITUDE` 修改，单位为米；高度场归一化和标签随参数调整。
 
-在 `bpx_terrain.toml` 中，将 `locomotion_policy` 指向崎岖行走导出模型，将 `stand_policy` 指向崎岖站立导出模型，`init_policy` 保留已有起身模型，然后运行：
+使用旧版 48 维崎岖模型时可编辑 `bpx_terrain.toml`。使用 450 维崎岖站立历史模型时，请改用 `bpx_terrain_history.toml`，其中已配置历史行走和历史站立模型。旧版 48 维 Stand 检查点不能用于继续训练当前站立任务。旧版模型的运行示例：
 
 ```bash
 python sim2sim/run_mujoco.py \
@@ -336,7 +335,7 @@ python sim2sim/validate_policy_export.py --samples 100
 + 相对默认姿态的关节角(12) + 相对关节速度(12) + 上一步动作(12)
 ```
 
-历史任务将每个观测项按"最旧到最新"各自堆叠 10 帧后再拼接（按项分块，不是 10 个完整 48 维帧的直接相连），Actor 移除线速度后得到 450 维输入，Critic 保留线速度真值得到 480 维输入；完整布局与部署侧的历史缓存契约见 [H=10 使用说明](ROUGH_HISTORY_TRAINING.md)。
+站立任务和崎岖行走历史任务将每个观测项按"最旧到最新"各自堆叠 10 帧后再拼接（按项分块，不是 10 个完整 48 维帧的直接相连），Actor 移除线速度后得到 450 维输入，Critic 保留线速度真值得到 480 维输入；完整布局与部署侧的历史缓存契约见 [H=10 使用说明](ROUGH_HISTORY_TRAINING.md)。
 
 关节按“类型优先”排列：先四个髋横滚，再四个髋俯仰，最后四个膝关节；每组内部均为 `fl → fr → hl → hr`（左前、右前、左后、右后）。不要直接用 MJCF 中的关节存储顺序替代策略顺序，详见 [关节顺序映射说明](sim2sim/JOINT_ORDER_MAPPING_GUIDE.md)。
 
@@ -367,7 +366,7 @@ pre-commit run --all-files
 
 - [崎岖行走课程与微调](ROUGH_TERRAIN_TRAINING.md)
 - [H=10 历史观测使用说明](ROUGH_HISTORY_TRAINING.md)
-- [崎岖站立课程与微调](ROUGH_STAND_TRAINING.md)
+- [崎岖站立课程与历史观测训练](ROUGH_STAND_TRAINING.md)
 - [训练—导出—MuJoCo 工作流](sim2sim/BPX_SIM2SIM_WORKFLOW.md)
 - [MuJoCo 运行器与手柄使用说明](sim2sim/README.md)
 - [训练环境配置说明](BPX_ENV_SETUP.md)

@@ -23,7 +23,7 @@ python -c "import mujoco, onnxruntime; print(mujoco.__version__, onnxruntime.__v
 | --- | --- |
 | `mjcf` | 带网格资源的 MuJoCo 模型 |
 | `locomotion_policy` | ONNX 主策略 |
-| `stand_policy` | Supervisor 可选站立 ONNX 策略 |
+| `stand_policy` | Supervisor 可选站立 ONNX 策略；支持 48/45 维单帧及 450 维历史输入 |
 | `init_policy` | 仅 `init_controller.mode="policy"` 时加载的旧起身 ONNX 策略 |
 | `torchscript_policy` | TorchScript 主策略及导出对比模型 |
 
@@ -265,7 +265,7 @@ python sim2sim/compare_trajectories.py \
 
 ## 6. 公共接口、日志与边界
 
-- 物理 200 Hz、策略 50 Hz；观测 48 维、动作 12 维。
+- 物理 200 Hz、策略 50 Hz；单帧观测 48 维，历史 Stand/Walk Actor 450 维，动作 12 维。
 - 观测顺序：机身线速度(3)、角速度(3)、重力投影(3)、指令(3)、相对关节角(12)、关节速度(12)、上一实际动作(12)。
 - 关节顺序：四个 hip_roll、四个 hip_pitch、四个 knee；每组内部 `fl/fr/hl/hr`。
 - 目标角：`q_default + 0.5 × action`；默认角为 roll=0、pitch=0.7、knee=-1.4 rad。
@@ -318,11 +318,11 @@ python sim2sim/run_mujoco.py \
 
 CSV 保留原 `base_z` 世界高度，新增 `ground_z`、`base_clearance`、`terrain_region`。
 Supervisor 和跌倒终止使用机身正下方地面对应的垂直离地高度；这不是四足支撑面拟合高度。
-地面查询只用于仿真监督和记录，不进入 48 维策略观测。脚和躯干接触检测覆盖高度场和外围地面。
+地面查询只用于仿真监督和记录，不进入单帧或历史策略观测。脚和躯干接触检测覆盖高度场和外围地面。
 地面使用可视化组 5，运行器自动开启显示；手动隐藏该组只影响显示，不影响碰撞。
 
 配置中 `[terrain]` 的 `seed` 可用于改变路面；比较不同策略时请保持相同 seed。
-训练策略没有更新，停车切换后的 Stand 以及崎岖区域重新起身仍需单独评估。
+历史 Stand 模型与停车切换、崎岖区域重新起身的闭环表现仍需单独评估。
 
 验证命令：
 
