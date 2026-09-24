@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import csv
+from contextlib import nullcontext
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -197,6 +198,8 @@ class Sim2SimRunner:
         log_path: Path | None = None,
         print_interval: float = 1.0,
         terminate_on_fall: bool = False,
+        torque_plot: bool = False,
+        torque_window: float = 10.0,
     ) -> RunResult:
         """运行一次闭环仿真。
 
@@ -210,6 +213,8 @@ class Sim2SimRunner:
             log_path: 可选 CSV 输出路径。
             print_interval: 终端状态打印周期。
             terminate_on_fall: 是否启用原有的物理步级跌倒终止逻辑。
+            torque_plot: 是否打开独立进程的实时关节力矩窗口。
+            torque_window: 力矩图显示的最近仿真秒数。
 
         Supervisor 启用时，``command``/``command_source`` 都被视为 raw command；真正进入
         观测的是 SupervisorDecision.command。
@@ -260,8 +265,13 @@ class Sim2SimRunner:
             _policy_path_text(self.behavior_policies.stand, self.config.repository_root),
             _policy_path_text(self.behavior_policies.init, self.config.repository_root),
         )
+        plot_context = nullcontext(None)
+        if torque_plot:
+            from .torque_plot import TorquePlot
+            plot_context = TorquePlot(self.config.joint_names, self.config.control.torque_limit,
+                                      self.config.simulation.timestep, torque_window)
         viewer_context = _viewer_context(self.model, self.data, viewer)
-        with viewer_context as active_viewer, CsvLogger(log_path, self.config.joint_names) as logger:
+        with plot_context as plot, viewer_context as active_viewer, CsvLogger(log_path, self.config.joint_names) as logger:
             if active_viewer is not None:
                 add_course_labels(active_viewer, self.config)
             while self.data.time < run_duration:
@@ -361,6 +371,10 @@ class Sim2SimRunner:
                 # 在一个策略周期内保持目标角，但每个物理步重新计算 PD 力矩。
                 target, torque = self.robot.apply_pd(action)
                 mujoco.mj_step(self.model, self.data)
+                if plot is not None:
+                    # Read the actual joint actuator forces after stepping MuJoCo.
+                    plot.publish(self.data.time, self.data.qfrc_actuator[self.robot.joint_dof_addresses],
+                                 behavior_mode)
 
                 if active_viewer is not None:
                     _update_viewer_overlay(

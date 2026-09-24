@@ -82,6 +82,21 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor \
 
 交互控制保持实时限速，不添加 `--no-realtime`。
 
+### 实时关节力矩窗口
+
+在运行命令中加入 `--torque-plot`，可与 MuJoCo viewer 同时使用：
+
+```bash
+python sim2sim/run_mujoco.py \
+    --config sim2sim/config/bpx_terrain_history.toml \
+    --supervisor --gamepad --viewer --torque-plot \
+    --torque-window 10 --duration 120
+```
+
+此窗口与 `PD_Init` 分支保持一致：三行分别是 hip roll、hip pitch、knee，四列分别是 FL、FR、HL、HR。它展示每个物理步之后的**实际执行器关节力矩**（N·m）、当前值、可见时间窗内的绝对峰值和配置的限幅线。`--torque-window` 接受 1～30 秒，窗口内还可切换 5/10/20/30 秒、暂停显示和导出当前可见数据为 CSV。关闭绘图窗口不会停止仿真。
+
+绘图在独立进程运行，使用有界非阻塞队列；窗口状态栏会显示丢失的显示样本数。它只依赖 Python 自带的 Tkinter，不需要 Matplotlib。需要观察真实运行节奏时保持默认实时限速，不添加 `--no-realtime`。
+
 ### 六状态与策略路由
 
 ```text

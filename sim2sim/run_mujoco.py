@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from contextlib import nullcontext
 from pathlib import Path
 import sys
@@ -26,6 +27,16 @@ from bpx_sim2sim.runner import Sim2SimRunner
 from bpx_sim2sim.supervisor import BehaviorSupervisor
 
 
+def _positive_seconds(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("力矩图窗口必须在 1 到 30 秒之间") from exc
+    if not math.isfinite(seconds) or not 1 <= seconds <= 30:
+        raise argparse.ArgumentTypeError("力矩图窗口必须在 1 到 30 秒之间")
+    return seconds
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=SCRIPT_DIR / "config" / "bpx_flat.toml")
@@ -36,6 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wz", type=float, default=None, help="目标偏航角速度，rad/s")
     parser.add_argument("--duration", type=float, default=None, help="仿真时长，秒")
     parser.add_argument("--viewer", action="store_true", help="打开 MuJoCo 可视化窗口")
+    parser.add_argument("--torque-plot", action="store_true", help="打开 12 关节实际输出力矩曲线窗口")
+    parser.add_argument("--torque-window", type=_positive_seconds, default=10.0, help="力矩曲线时间窗，1–30 秒（默认 10）")
     parser.add_argument("--no-realtime", action="store_true", help="关闭实时限速，尽快完成仿真")
     parser.add_argument("--gamepad", action="store_true", help="用 Linux 游戏手柄实时生成速度指令")
     parser.add_argument("--list-gamepads", action="store_true", help="列出检测到的游戏手柄后退出")
@@ -264,6 +277,8 @@ def main() -> int:
                 realtime=False if args.no_realtime else None,
                 log_path=args.log,
                 terminate_on_fall=args.terminate_on_fall,
+                torque_plot=args.torque_plot,
+                torque_window=args.torque_window,
             )
     except (OSError, ValueError) as exc:
         if not use_gamepad:
