@@ -37,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wz", type=float, default=None, help="目标偏航角速度，rad/s")
     parser.add_argument("--duration", type=float, default=None, help="仿真时长，秒")
     parser.add_argument("--viewer", action="store_true", help="打开 MuJoCo 可视化窗口")
+    parser.add_argument("--velocity-plot", action="store_true", help="打开 command 与实际速度追踪曲线窗口")
+    parser.add_argument("--velocity-window", type=float, default=10.0, help="速度曲线时间窗，1–30 秒（默认 10）")
     parser.add_argument("--torque-plot", action="store_true", help="打开 12 关节实际输出力矩曲线窗口")
     parser.add_argument("--torque-window", type=float, default=10.0, help="力矩曲线时间窗，1–30 秒（默认 10）")
     parser.add_argument("--no-realtime", action="store_true", help="关闭实时限速，尽快完成仿真")
@@ -271,6 +273,8 @@ def main() -> int:
                 realtime=False if args.no_realtime else None,
                 log_path=args.log,
                 terminate_on_fall=args.terminate_on_fall,
+                velocity_plot=args.velocity_plot,
+                velocity_window=args.velocity_window,
                 torque_plot=args.torque_plot,
                 torque_window=args.torque_window,
             )

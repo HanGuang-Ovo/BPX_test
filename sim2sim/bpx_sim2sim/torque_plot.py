@@ -59,6 +59,13 @@ def envelope_indices(values: np.ndarray, width: int) -> np.ndarray:
 class TorqueWindow:
     """Tk widgets 只在绘图进程的主线程访问。"""
 
+    title = "Joint torque monitor"
+    heading = "JOINT TORQUES"
+    subtitle = "Actuator joint torque [N·m]  •  physics-step samples  •  dashed lines: configured limit"
+    export_name = "bpx_joint_torques.csv"
+    ui_font_size = 10
+    title_font_size = 16
+
     def __init__(self, root, samples, stop, joint_names, limit, timestep, seconds):
         import tkinter as tk
         from tkinter import ttk
@@ -69,33 +76,44 @@ class TorqueWindow:
         self.paused_rows = None
         self.seconds = tk.StringVar(value=f'{seconds:g}')
         self.status = tk.StringVar(value='Waiting for simulation samples...')
-        root.title('BPX | Joint torque monitor')
+        root.title(f'BPX | {self.title}')
         root.geometry('1360x850')
         root.minsize(920, 600)
         root.configure(bg='#101827')
         toolbar = tk.Frame(root, bg='#101827', padx=16, pady=12)
         toolbar.pack(fill='x')
-        tk.Label(toolbar, text='BPX  /  JOINT TORQUES', fg='#f0f5ff', bg='#101827',
-                 font=('DejaVu Sans', 16, 'bold')).pack(side='left')
-        tk.Label(toolbar, text='Window (s)', fg='#aabbd2', bg='#101827').pack(side='left', padx=(30, 8))
+        tk.Label(toolbar, text=f'BPX  /  {self.heading}', fg='#f0f5ff', bg='#101827',
+                 font=('DejaVu Sans', self.title_font_size, 'bold')).pack(side='left')
+        ui_font = ('DejaVu Sans', self.ui_font_size)
+        style = ttk.Style(root)
+        style.configure('Monitor.TButton', font=ui_font)
+        root.option_add('*TCombobox*Listbox.font', ui_font)
+        tk.Label(toolbar, text='Window (s)', fg='#aabbd2', bg='#101827',
+                 font=ui_font).pack(side='left', padx=(30, 8))
         selector = ttk.Combobox(toolbar, textvariable=self.seconds, values=(5, 10, 20, 30),
-                                width=5, state='readonly')
+                                width=5, state='readonly', font=ui_font)
         selector.pack(side='left', padx=(0, 16))
-        self.pause_button = ttk.Button(toolbar, text='Pause display', command=self.toggle_pause)
+        self.pause_button = ttk.Button(toolbar, text='Pause display', command=self.toggle_pause,
+                                       style='Monitor.TButton')
         self.pause_button.pack(side='left', padx=4)
-        ttk.Button(toolbar, text='Save visible CSV', command=self.save_csv).pack(side='left', padx=4)
-        tk.Label(root, text='Actuator joint torque [N·m]  •  physics-step samples  •  dashed lines: configured limit',
-                 fg='#aabbd2', bg='#101827', anchor='w', padx=16).pack(fill='x')
+        ttk.Button(toolbar, text='Save visible CSV', command=self.save_csv,
+                   style='Monitor.TButton').pack(side='left', padx=4)
+        tk.Label(root, text=self.subtitle,
+                 fg='#aabbd2', bg='#101827', anchor='w', justify='left',
+                 font=ui_font, padx=16).pack(fill='x')
         self.canvas = tk.Canvas(root, bg='#101827', highlightthickness=0)
         self.canvas.pack(fill='both', expand=True, padx=8, pady=8)
         tk.Label(root, textvariable=self.status, fg='#aabbd2', bg='#101827',
-                 anchor='w', padx=16, pady=8).pack(fill='x')
+                 anchor='w', font=ui_font, padx=16, pady=8).pack(fill='x')
         self.joint_names = joint_names
         # Display by leg and joint type, independent of policy/MuJoCo index order.
-        self.panels = [(leg, kind, joint_names.index(f'{leg}_{kind}_joint'))
+        self.panels = self.make_panels(joint_names)
+        self.root.after(0, self.tick)
+
+    def make_panels(self, joint_names):
+        return [(leg, kind, joint_names.index(f'{leg}_{kind}_joint'))
                        for kind in ('hip_roll', 'hip_pitch', 'knee')
                        for leg in ('fl', 'fr', 'hl', 'hr')]
-        self.root.after(0, self.tick)
 
     def toggle_pause(self):
         if self.paused_rows is None:
@@ -110,9 +128,9 @@ class TorqueWindow:
         rows = self.paused_rows if self.paused_rows is not None else self.history.visible(float(self.seconds.get()))
         if not rows:
             return
-        path = filedialog.asksaveasfilename(parent=self.root, title='Save visible torque samples',
+        path = filedialog.asksaveasfilename(parent=self.root, title=f'Save visible {self.title} samples',
                                           defaultextension='.csv', filetypes=[('CSV', '*.csv')],
-                                          initialfile='bpx_joint_torques.csv')
+                                          initialfile=self.export_name)
         if path:
             try:
                 self.history.export(path, rows)
@@ -183,12 +201,12 @@ class TorqueWindow:
                             f'limit = ±{self.limit:g} N·m   |   dropped display samples = {dropped}')
 
 
-def _run_window(samples, stop, ready, joint_names, limit, timestep, seconds):
+def _run_window(samples, stop, ready, joint_names, limit, timestep, seconds, window_type):
     root = None
     try:
         import tkinter as tk
         root = tk.Tk()
-        TorqueWindow(root, samples, stop, joint_names, limit, timestep, seconds)
+        window_type(root, samples, stop, joint_names, limit, timestep, seconds)
         ready.put(None)
         root.mainloop()
     except Exception as exc:
@@ -204,9 +222,12 @@ def _run_window(samples, stop, ready, joint_names, limit, timestep, seconds):
 class TorquePlot:
     """Context manager. Closing the chart leaves the simulation running."""
 
+    window_type = TorqueWindow
+    label = "力矩"
+
     def __init__(self, joint_names, limit, timestep, seconds=10.0):
         if not math.isfinite(seconds) or not 1 <= seconds <= 30:
-            raise ValueError('torque window 必须在 1 到 30 秒之间')
+            raise ValueError(f'{self.label} window 必须在 1 到 30 秒之间')
         self.joint_names = tuple(joint_names)
         self.limit, self.timestep, self.seconds = limit, timestep, seconds
         self.process = None
@@ -219,7 +240,7 @@ class TorquePlot:
         self.ready = context.Queue(maxsize=2)
         self.stop = context.Event()
         self.process = context.Process(target=_run_window, args=(self.samples, self.stop, self.ready,
-                                       self.joint_names, self.limit, self.timestep, self.seconds), daemon=True)
+                                       self.joint_names, self.limit, self.timestep, self.seconds, self.window_type), daemon=True)
         try:
             self.process.start()
             error = self.ready.get(timeout=8)
@@ -227,7 +248,7 @@ class TorquePlot:
                 raise RuntimeError(error)
         except Exception as exc:
             self.close()
-            raise RuntimeError(f'无法打开力矩窗口，请检查 Tkinter 和桌面显示环境：{exc}') from exc
+            raise RuntimeError(f'无法打开{self.label}窗口，请检查 Tkinter 和桌面显示环境：{exc}') from exc
         return self
 
     def publish(self, timestamp, torques, mode):

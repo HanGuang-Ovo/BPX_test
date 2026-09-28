@@ -343,3 +343,25 @@ Z 偏移 -0.04 m；不会通过截断高度数据削平峰谷。上述早期行�
 
 独立崎岖历史策略使用 `config/bpx_terrain_history.toml`（480 维输入、H=10）。
 训练、导出及历史排列契约见 [历史任务说明](../ROUGH_HISTORY_TRAINING.md)。原配置默认 H=1。
+
+### 实时速度追踪窗口
+
+添加 `--velocity-plot` 可在独立窗口对比 command 与实际速度，也可同时启用 `--torque-plot`：
+
+```bash
+python sim2sim/run_mujoco.py \
+    --config sim2sim/config/bpx_terrain_history.toml \
+    --auto-init --viewer --vx 0.2 \
+    --velocity-plot --velocity-window 10 --duration 120
+```
+
+手柄控制时，将 `--auto-init --vx 0.2` 换成 `--supervisor --gamepad`，按 RB 起身。
+
+- 三行分别为机体系 `vx`、`vy`（m/s）和 `wz`（rad/s）。蓝色虚线是 command，绿色实线是实际速度。
+- command 与日志中的 `command_*` 一致：启用 Supervisor 时使用过滤后的指令；未启用时使用命令行或手柄指令。
+  实际线速度是机体质心速度，角速度为机体系角速度，与策略观测的速度定义一致。
+- 每行显示当前 command、实际值、误差（实际减 command）和可见样本的 RMSE。
+- 每个物理步采样，默认显示最近 10 秒，`--velocity-window` 支持 1–30 秒，窗口可选 5/10/20/30 秒。
+  `Pause display` 暂停显示，`Save visible CSV` 导出可见样本（`command_vx/vy/wz`、`body_vx/vy/wz`）。
+- 与力矩窗口共用 Tkinter、独立进程和非阻塞队列机制；关闭图表后仿真继续，仿真结束后图表自动关闭。
+  实时查看时不要使用 `--no-realtime`；队列跟不上时会显示丢样本数，RMSE 仅统计收到的可见样本。

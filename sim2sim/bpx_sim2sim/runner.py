@@ -212,6 +212,8 @@ class Sim2SimRunner:
         terminate_on_fall: bool = False,
         torque_plot: bool = False,
         torque_window: float = 10.0,
+        velocity_plot: bool = False,
+        velocity_window: float = 10.0,
     ) -> RunResult:
         """运行一次闭环仿真。
 
@@ -227,6 +229,8 @@ class Sim2SimRunner:
             terminate_on_fall: 是否启用原有的物理步级跌倒终止逻辑。
             torque_plot: 是否打开独立进程的实时关节力矩窗口。
             torque_window: 力矩曲线的滚动时间窗，单位秒。
+            velocity_plot: 是否显示 command 与机体系实际速度的实时对比。
+            velocity_window: 速度曲线滚动时间窗，单位秒。
 
         Supervisor 启用时，``command``/``command_source`` 都被视为 raw command；真正进入
         观测的是 SupervisorDecision.command。
@@ -300,8 +304,13 @@ class Sim2SimRunner:
             from .torque_plot import TorquePlot
             plot_context = TorquePlot(self.config.joint_names, self.config.control.torque_limit,
                                       self.config.simulation.timestep, torque_window)
+        velocity_context = nullcontext(None)
+        if velocity_plot:
+            from .velocity_plot import VelocityPlot
+            velocity_context = VelocityPlot(self.config.simulation.timestep, velocity_window)
         viewer_context = _viewer_context(self.model, self.data, viewer)
-        with plot_context as plot, viewer_context as active_viewer, CsvLogger(log_path, self.config.joint_names) as logger:
+        with (plot_context as plot, velocity_context as velocity_chart,
+              viewer_context as active_viewer, CsvLogger(log_path, self.config.joint_names) as logger):
             if active_viewer is not None:
                 add_course_labels(active_viewer, self.config)
             while self.data.time < run_duration:
@@ -418,6 +427,11 @@ class Sim2SimRunner:
                     # Do not plot the pre-step PD estimate (especially for implicit servos).
                     plot.publish(self.data.time, self.data.qfrc_actuator[self.robot.joint_dof_addresses],
                                  behavior_mode)
+
+                if velocity_chart is not None:
+                    linear, angular = self.robot.base_velocity_body()
+                    velocity_chart.publish(self.data.time, command_array,
+                                           (linear[0], linear[1], angular[2]), behavior_mode)
 
                 if active_viewer is not None:
                     _update_viewer_overlay(
