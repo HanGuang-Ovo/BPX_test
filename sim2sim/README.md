@@ -1,6 +1,6 @@
 # BPX Isaac Lab → MuJoCo 跨仿真运行
 
-本目录在 MuJoCo 中运行 BPX 行走和站立策略。`PD_Init` 分支的起身默认采用足端轨迹插值 + 解析 IK + PD（2026-09-23 更新）；设计原理、排错过程和历史实验见 [完整工作流](BPX_SIM2SIM_WORKFLOW.md)。
+本目录在 MuJoCo 中运行 BPX 行走和站立策略。`PD_Init` 分支的起身默认采用足端轨迹插值 + 解析 IK + PD；设计原理、排错过程和历史实验见 [完整工作流](BPX_SIM2SIM_WORKFLOW.md)。
 
 ## 1. 准备环境与模型
 
@@ -17,7 +17,7 @@ python -c "import mujoco, onnxruntime; print(mujoco.__version__, onnxruntime.__v
 
 在 Isaac Lab 环境中用 `scripts/rsl_rl/play.py` 分别加载行走、站立任务的目标检查点，生成 `exported/policy.onnx` 和 `exported/policy.pt`。训练与导出命令见 [项目 README](../README.md)。
 
-更新 [config/bpx_flat.toml](config/bpx_flat.toml) 中的 `[paths]`：
+更新实际传给 `--config` 的 TOML 中的 `[paths]`：默认入口为 [config/bpx_flat.toml](config/bpx_flat.toml)，H=10 历史行走使用 [config/bpx_terrain_history.toml](config/bpx_terrain_history.toml)。各配置互相独立。
 
 | 字段 | 用途 |
 | --- | --- |
@@ -38,11 +38,11 @@ python sim2sim/run_mujoco.py --backend zero --duration 2 --no-realtime
 
 `validate_setup.py` 加载 MJCF，按名称构建 12 关节/执行器映射，打印观测与动作形状，并执行零动作 PD 数值检查。通过只表示模型和控制接口具备运行前提，不证明策略性能，也不能替代训练侧关节顺序核对。
 
-动作零点对应默认站姿；从默认趴姿执行 zero 后端会尝试趋向站姿，不是“趴姿保持”，也不等于神经网络 Init 策略。
+动作零点对应默认站姿；从默认趴姿执行 zero 后端会尝试趋向站姿，不是“趴姿保持”，也不等于启用 Supervisor 后的 PD Init 轨迹起身。
 
 ## 3. 默认流程：手柄起身与多策略控制
 
-默认复位为根高度 `0.133 m` 的腹部朝地趴姿，髋俯仰 `0.98 rad`、膝 `-2.62 rad`。在 Linux 上连接手柄、配置好三个 ONNX 模型后执行：
+默认复位为根高度 `0.133 m` 的腹部朝地趴姿，髋俯仰 `0.98 rad`、膝 `-2.62 rad`。在 Linux 上连接手柄、配置好行走和站立 ONNX 模型后执行；默认 PD Init 无需起身模型：
 
 ```bash
 python sim2sim/run_mujoco.py --list-gamepads
@@ -153,7 +153,7 @@ python sim2sim/run_mujoco.py \
 CSV 中 `behavior_policy=init_pd` 标识传统控制；`init_phase` 为 support/lift/paused/settle，
 `init_progress` 为累计轨迹时间（秒），`feet_in_contact` 为接触足数量。
 旧配置未提供 `[init_controller]` 时仍使用 RL Init；当前四份内置配置均显式选择 `mode="pd"`。
-Isaac Lab 的训练环境和奖励没有修改。当前验证范围是平地水平趴卧起身，不包含台阶落足或翻身恢复。
+PD Init 仅作用于 MuJoCo，不依赖 Isaac Lab 的 RL Init 训练。当前验证范围是平地水平趴卧起身，不包含台阶落足或翻身恢复。
 
 回归检查：
 
@@ -276,7 +276,7 @@ python sim2sim/compare_trajectories.py \
 
 CSV 记录原始与过滤后的 command、行为状态/策略、动作混合系数、基座状态、关节位置/速度/目标角/动作/力矩。Viewer 的 `base_link height` 是配置中 torso body 原点的世界 Z 坐标，不是机身最低点离地距离。
 
-旧文档中的 `2e-7` 导出误差、20 秒前进与零动作 RMSE 属于早期实验记录，见 [工作流历史结果](BPX_SIM2SIM_WORKFLOW.md#14-历史验证结果)。它们不能替代当前三份策略和状态切换的复验。本目录提供验证工具；本次文档同步未重新训练或运行物理仿真。
+旧文档中的 `2e-7` 导出误差、20 秒前进与零动作 RMSE 属于早期实验记录，见 [工作流历史结果](BPX_SIM2SIM_WORKFLOW.md#14-历史验证结果)。它们不能替代当前控制器、策略和状态切换的复验。本目录提供验证工具；本次文档同步未重新训练或运行物理仿真。
 
 ## 三级起伏地形测试场
 
@@ -341,10 +341,13 @@ Z 偏移 -0.04 m；不会通过截断高度数据削平峰谷。上述早期行�
 
 ## H=10 历史策略
 
-独立崎岖历史策略使用 `config/bpx_terrain_history.toml`（480 维输入、H=10）。
-训练、导出及历史排列契约见 [历史任务说明](../ROUGH_HISTORY_TRAINING.md)。原配置默认 H=1。
+崎岖历史行走使用 `config/bpx_terrain_history.toml`：`dimension=450`、`history_length=10`、`include_base_lin_vel=false`。当前站立任务和历史行走任务的 Actor 输入均为 450 维，训练 Critic 输入为 480 维；MuJoCo 只运行 Actor。旧的对称 480 维 Actor 模型不能直接套用此配置。
 
-### 实时速度追踪窗口
+历史按观测项分块，每项从最旧帧排列到最新帧，首帧重复填满 10 帧，以 50 Hz 更新。行走历史在所有行为状态中持续更新；历史 Stand 每次重新进入时创建独立缓存，指令保持为零。历史中的上一动作使用混合后实际施加的动作。
+
+Stand ONNX 自动识别 48/45 维单帧或 450 维历史输入，不依赖主行走配置的历史长度；因此单帧行走也可搭配历史站立。其余三份内置配置的主行走默认为 H=1、48 维。训练、导出及历史排列契约见 [历史任务说明](../ROUGH_HISTORY_TRAINING.md)。
+
+## 实时速度追踪窗口
 
 添加 `--velocity-plot` 可在独立窗口对比 command 与实际速度，也可同时启用 `--torque-plot`：
 

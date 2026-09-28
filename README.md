@@ -1,8 +1,10 @@
-# BPX 四足机器人多策略训练与跨仿真验证
+# BPX 四足机器人多策略训练与跨仿真验证（PD_Init）
 
 本项目基于 Isaac Lab 的管理器式强化学习环境，使用 RSL-RL 的 PPO 算法分别训练 BPX 四足机器人的行走、静止站立和趴卧起身策略，并将导出的策略部署到 MuJoCo，验证不同物理引擎中的控制表现（sim2sim）。项目现有环境说明以 Isaac Lab 2.2.1 为基线。
 
-行走、站立、起身三类策略共享机器人模型和 12 维动作接口；行走基线与 Init 使用 48 维单帧观测；站立任务及崎岖行走历史任务使用 H=10、Actor 450 维 / Critic 480 维的非对称历史观测。行走和站立分别提供平地与崎岖地形训练任务。MuJoCo 端通过上层状态机（Supervisor）选择策略，支持手柄速度指令、起身触发、停止过渡、动作平滑和 CSV 日志记录。
+`PD_Init` 分支在 MuJoCo 中默认使用“足端五次轨迹 + 解析 IK + 关节 PD”完成趴卧起身，再交接给站立和行走策略；默认起身不需要 Init 神经网络模型。原有 RL Init 训练任务和部署入口保留，用于对照实验。
+
+行走、站立、RL 起身三类策略共享机器人模型和 12 维动作接口；行走基线与 Init 使用 48 维单帧观测；站立任务及崎岖行走历史任务使用 H=10、Actor 450 维 / Critic 480 维的非对称历史观测。行走和站立分别提供平地与崎岖地形训练任务。MuJoCo 端通过上层状态机（Supervisor）选择策略，支持手柄速度指令、起身触发、停止过渡、动作平滑、CSV 日志记录，以及实时速度追踪和 12 关节力矩窗口。
 
 ## 任务与功能
 
@@ -117,7 +119,7 @@ python scripts/rsl_rl/train.py \
     --task BPX-Locomotion-v0 --num_envs 64 --max_iterations 2 --headless
 ```
 
-分别训练三个策略：
+按需训练行走和站立策略；只有使用 RL Init 对照流程时才需要训练起身策略：
 
 ```bash
 python scripts/rsl_rl/train.py --task BPX-Locomotion-v0 --headless
@@ -139,7 +141,7 @@ python scripts/rsl_rl/train.py \
 
 ### 从平地策略微调崎岖地形策略
 
-两个崎岖任务均采用 ±0.5～±4 cm 的 8 级起伏地形，保持原有单帧观测和动作接口，不向策略输入地形高度。
+崎岖行走和站立任务均采用 ±0.5～±4 cm 的 8 级起伏地形和 12 维动作接口，不向策略输入地形高度。普通崎岖行走使用 48 维单帧观测；崎岖站立与历史版崎岖行走使用 H=10 非对称历史观测。
 
 | 任务 | 重置位置 | 难度课程 | 奖励 |
 | --- | --- | --- | --- |
@@ -232,7 +234,7 @@ python scripts/rsl_rl/play.py \
 | [bpx_terrain_standing.toml](sim2sim/config/bpx_terrain_standing.toml) | 三级起伏地形 / 站姿 | 直接测试行走策略；文件名中的 standing 指初始姿态 |
 | [bpx_terrain_history.toml](sim2sim/config/bpx_terrain_history.toml) | 三级起伏地形 / 趴姿 | H=10 历史观测行走和崎岖站立策略验证，配合 `--supervisor --auto-init` 无手柄起身 |
 
-编辑实际传给 `--config` 的文件的 `[paths]`，将 `locomotion_policy`、`stand_policy`、`init_policy` 指向各自导出的 `policy.onnx`；使用 TorchScript 时同时更新 `torchscript_policy`。
+编辑实际传给 `--config` 的文件的 `[paths]`，将 `locomotion_policy`、`stand_policy` 指向各自导出的 `policy.onnx`；使用 TorchScript 时同时更新 `torchscript_policy`。四份内置配置的 `[init_controller]` 均设为 `mode = "pd"`，不会加载 `init_policy`；仅切回 RL Init 时需要该模型。
 
 配置中的相对路径均相对于项目根目录解析。默认文件记录了具体实验目录，且 `logs/` 被 Git 忽略，因此这些检查点不保证随代码仓库提供，也不会自动切换到新训练的模型。
 
@@ -247,11 +249,12 @@ python sim2sim/run_mujoco.py --backend zero --duration 2 --no-realtime
 
 ### 手柄控制与多策略切换
 
-配置好三个 ONNX 策略后，在 Linux 上连接手柄并运行：
+配置好行走和站立 ONNX 策略后，在 Linux 上连接手柄并运行（以下使用 H=10 配置）：
 
 ```bash
 python sim2sim/run_mujoco.py --list-gamepads
 python sim2sim/run_mujoco.py \
+    --config sim2sim/config/bpx_terrain_history.toml \
     --backend onnx --viewer --gamepad --supervisor \
     --duration 120 --log sim2sim/logs/gamepad.csv
 ```
@@ -259,19 +262,19 @@ python sim2sim/run_mujoco.py \
 默认配置从趴姿开始，运行流程如下：
 
 1. `WAITING_INIT`：保持趴姿，等待按下手柄 **RB**。
-2. `INIT`：调用起身策略，速度指令保持为零；满足高度、姿态和稳定性条件后进入 `STAND`。
+2. `INIT`：默认执行足端轨迹和 PD 控制，速度指令保持为零；轨迹完成且满足高度、姿态、速度和四足接触的稳定确认条件后进入 `STAND`。
 3. `STAND`：调用站立策略；摇杆指令持续超过阈值后进入 `WALK`。
 4. `WALK`：调用行走策略跟踪速度；松开摇杆后经 `STOPPING` 减速，再回到 `STAND`。
 
 默认左摇杆上下控制 `vx`、左右控制 `vy`，右摇杆左右控制 `wz`。可加 `--gamepad-deadman`，要求按住 **LB** 才接受非零速度指令；多个手柄可用 `--gamepad-index 0` 或 `--gamepad-device /dev/input/eventN` 选择。
 
-Supervisor 使用指令变化率限制、切换迟滞、稳定时间确认和动作混合来平滑过渡。遇到不支持的起身姿态、起身倾角过大等条件时进入 `DISABLED`，运行器结束本次仿真。缺少站立模型时会使用零指令行走策略作为回退；缺少起身模型时无法完成默认趴姿起身流程。
+Supervisor 使用指令变化率限制、切换迟滞、稳定时间确认和动作混合来平滑过渡。遇到不支持的起身姿态、起身倾角过大等条件时进入 `DISABLED`，运行器结束本次仿真。缺少站立模型时会使用零指令行走策略作为回退；PD Init 不依赖起身模型；只有 RL Init 模式缺少起身模型时，才无法完成趴姿起身流程。
 
 ### 三级地形与崎岖策略测试
 
 测试场依次为平地、轻微起伏（±2 cm）、较大起伏（±4 cm），带区域标签和平坦返回通道。地形振幅在 [terrain.py](sim2sim/bpx_sim2sim/terrain.py) 的 `MILD_AMPLITUDE`、`MODERATE_AMPLITUDE` 修改，单位为米；高度场归一化和标签随参数调整。
 
-使用旧版 48 维崎岖模型时可编辑 `bpx_terrain.toml`。使用 450 维崎岖站立历史模型时，请改用 `bpx_terrain_history.toml`，其中已配置历史行走和历史站立模型。旧版 48 维 Stand 检查点不能用于继续训练当前站立任务。旧版模型的运行示例：
+使用旧版 48 维崎岖模型时可编辑 `bpx_terrain.toml`。使用 450 维历史行走模型时，选择 `bpx_terrain_history.toml`。站立 ONNX 加载器支持 48/45 维单帧和 450 维历史输入，可与单帧或历史行走模型搭配；各配置都需单独更新模型路径。旧版 48 维 Stand 检查点不能用于继续训练当前站立任务。旧版模型的运行示例：
 
 ```bash
 python sim2sim/run_mujoco.py \
@@ -280,7 +283,7 @@ python sim2sim/run_mujoco.py \
     --duration 120 --log sim2sim/logs/terrain_gamepad.csv
 ```
 
-按 RB 在出生平地起身后，分别检查三个区域上的行走与站立，并测试“行走 → 停止 → 站立 → 再行走”。现有 Init 仍是平地起身策略，崎岖行走和站立训练不包含崎岖地形起身。
+按 RB 在出生平地起身后，分别检查三个区域上的行走与站立，并测试“行走 → 停止 → 站立 → 再行走”。默认 PD Init 面向平地、机身接近水平的腹部朝地趴姿，不包含台阶落足规划或翻身恢复；崎岖行走和站立训练也不包含崎岖地形起身。
 
 CSV 中 `base_z` 是世界高度，`ground_z` 为当地地面高度，`base_clearance` 为局部离地高度，`terrain_region` 为当前区域。具体说明见 [三级地形使用说明](sim2sim/README.md#三级起伏地形测试场)。
 
@@ -291,6 +294,26 @@ python sim2sim/run_mujoco.py \
     --config sim2sim/config/bpx_terrain_standing.toml \
     --backend onnx --viewer --vx 0.2 --vy 0.0 --wz 0.0 --duration 50
 ```
+
+### PD 起身与实时曲线
+
+无手柄时可直接用历史策略配置自动起身，并同时观察速度和关节力矩：
+
+```bash
+python sim2sim/run_mujoco.py \
+    --config sim2sim/config/bpx_terrain_history.toml \
+    --backend onnx --auto-init --viewer --vx 0 --vy 0 --wz 0 \
+    --velocity-plot --torque-plot --duration 30 \
+    --log sim2sim/logs/pd_init.csv
+```
+
+`--auto-init` 自动启用 Supervisor；将 `--vx 0` 改为 `--vx 0.2` 可在起身后继续行走。手柄流程改用 `--supervisor --gamepad`，按 RB 起身。命令未指定 `--config` 时仍使用 `bpx_flat.toml`。
+
+PD Init 默认先用 1 秒收脚到低位支撑，再用 3 秒抬升；足端支撑深度为 0.19 m、最终深度为 0.38 m，均为髋坐标系下的运动学距离。Init 使用 `Kp=80`、`Kd=2`、30 N·m 力矩上限及 2 rad/s 目标关节角变化率限制。跟踪误差过大或抬升阶段未保持四足接触时暂停轨迹；轨迹完成后还需连续稳定 0.5 秒，超过 8 秒未交接会以 `init_pd_timeout` 结束。因此 4 秒是标称轨迹时长，不是固定的起身完成时间。参数集中在 TOML 的 `[init_controller]`，详细说明见 [PD Init 控制流程](sim2sim/README.md#pd-init4-秒五次足端轨迹)。
+
+`--velocity-plot` 对比机体系 `vx/vy/wz` 指令和实际值，显示误差与可见样本 RMSE；`--torque-plot` 显示 12 关节实际执行器力矩。两个窗口均支持暂停显示和导出可见 CSV，默认显示最近 10 秒，可用 `--velocity-window`、`--torque-window` 设置 1–30 秒。图表需要 Tkinter 和桌面显示环境；实时观察时保留实时限速。图表导出的物理步数据与 `--log` 的策略步日志分开。
+
+需要对比旧 RL 起身模型时，在启用 Supervisor 的命令中加 `--init-policy /实际路径/policy.onnx`，会覆盖配置并切换到 RL Init；也可将 `[init_controller].mode` 改为 `"policy"` 并配置 `paths.init_policy`。RL Init 使用单帧输入，不复用 H=10 行走历史模型。
 
 ### 无手柄的单策略测试
 
@@ -324,7 +347,8 @@ python sim2sim/validate_policy_export.py --samples 100
 | 观测 / 动作维度 | 48 / 12（H=10 历史 Actor 为 450 / 12，Critic 输入 480 维） |
 | 动作含义 | `目标关节角 = 默认关节角 + 0.5 × action` |
 | 默认关节角 | 髋横滚 `0.0`、髋俯仰 `0.7`、膝关节 `-1.4` rad |
-| 名义 PD 增益 | `Kp = 40`、`Kd = 1` |
+| Stand/Walk 名义 PD 增益 | `Kp = 40`、`Kd = 1` |
+| MuJoCo PD Init 增益 | `Kp = 80`、`Kd = 2`，进入/退出时平滑过渡 |
 | 力矩 / 速度限制配置 | `30 N·m` / `20 rad/s` |
 
 48 维观测按以下顺序拼接：
@@ -349,7 +373,7 @@ python sim2sim/validate_policy_export.py --samples 100
 | 找不到 `bpx.usd` 或引用资产 | 检查完整 USD 资产是否已复制或转换生成；USD 文件被 Git 忽略 |
 | 训练显存不足 | 降低 `--num_envs`，并使用 `--headless` |
 | MuJoCo 找不到策略文件 | 更新 TOML 的 `[paths]`，检查是否已通过 `play.py` 导出模型 |
-| 趴姿一直等待、不起身 | 检查 Init 模型是否加载；手柄流程按下 RB，无手柄流程加 `--auto-init` |
+| 趴姿一直等待、不起身 | 确认已启用 Supervisor；手柄流程按 RB，无手柄加 `--auto-init`；只有 RL Init 模式需要检查起身模型 |
 | ONNX / TorchScript 对比失败 | 先确认两份导出来自同一检查点；默认配置可能指向不同实验 |
 | 编辑器无法解析 Isaac Sim 模块 | 在 VS Code 中运行 `setup_python_env` 任务，按提示填写 Isaac Sim 安装路径 |
 
