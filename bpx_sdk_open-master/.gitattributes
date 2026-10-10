@@ -1,0 +1,9 @@
+# Normalize text files to LF on every platform.
+* text=auto eol=lf
+
+# Prebuilt libraries and Python wheel artifacts are binary.
+*.dll binary
+*.dylib binary
+*.lib binary
+*.so binary
+*.whl binary
