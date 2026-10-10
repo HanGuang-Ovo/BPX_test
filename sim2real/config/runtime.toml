@@ -1,0 +1,81 @@
+# 相对路径均相对于本文件所在目录。先复制本文件与标定模板到本机配置目录。
+calibration_file = "joint_calibration.template.toml"
+
+[network]
+robot_ip = "10.21.20.1"
+state_port = 9873
+joint_state_port = 7895
+tcp_local_port = 0
+state_rate_hz = 100
+connect_timeout_s = 5.0
+
+[policy]
+walk_model = "../../logs/rsl_rl/bpx_rough_history_asymmetric/2026-09-23_11-17-22/exported/policy.onnx"
+stand_model = "../../logs/rsl_rl/bpx_rough_stand/2026-09-24_08-51-56_stable/exported/policy.onnx"
+history_length = 10
+include_base_lin_vel = false
+observation_dimension = 450
+action_scale = 0.5
+default_joint_position = [0, 0, 0, 0, 0.7, 0.7, 0.7, 0.7, -1.4, -1.4, -1.4, -1.4]
+joint_names = [
+  "fl_hip_roll_joint", "fr_hip_roll_joint", "hl_hip_roll_joint", "hr_hip_roll_joint",
+  "fl_hip_pitch_joint", "fr_hip_pitch_joint", "hl_hip_pitch_joint", "hr_hip_pitch_joint",
+  "fl_knee_joint", "fr_knee_joint", "hl_knee_joint", "hr_knee_joint",
+]
+
+[control]
+policy_rate_hz = 50
+# 暂定值，需确认固件要求后填写并确认 joint_control_verified。
+send_rate_hz = 50
+kp = [40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40]
+kd = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+gains_verified = false
+standing_handover_verified = false
+takeover_duration_s = 2.0
+action_blend_duration_s = 0.3
+command_limit = [1.0, 0.5, 1.0]
+command_slew_rate = [1.5, 1.0, 2.0]
+walk_enter_threshold = 0.12
+walk_exit_threshold = 0.05
+walk_enter_delay_s = 0.15
+walk_exit_delay_s = 0.30
+minimum_walk_time_s = 0.30
+# 停车先向 Walk 输入零 command，延时后切 Stand；这里不假定有接触/高度真值。
+stopping_duration_s = 1.5
+
+[firmware]
+expected_sdk_version = "1.0.9"
+joint_control_verified = false
+watchdog_verified = false
+shutdown_verified = false
+gain_units_verified = false
+robot_limits_verified = false
+# 以下为固件实测参数，不沿用仿真中的 30 Nm 假设。数组采用策略顺序。
+watchdog_timeout_s = 0.0
+robot_torque_limit_nm = []
+shutdown_action = "unconfirmed"
+
+[safety]
+allow_motion = false
+# 初始诊断阈值；后续按实测反馈和循环耗时调整。
+max_state_age_s = 0.10
+max_group_skew_s = 0.05
+max_cycle_lateness_s = 0.01
+max_tilt_rad = 0.45
+# 12 元素数组，策略顺序；未填写时禁止策略运动。
+target_speed_rad_s = []
+joint_speed_rad_s = []
+tracking_error_rad = []
+takeover_position_error_rad = []
+
+[jog]
+# 点动时其他关节 kp/kd=0，必须确认本体已由支架/人工装置支撑。
+supported_robot_confirmed = false
+# 测量后填写；不从 SDK 示例复制 100/2 的增益。
+kp = 0.0
+kd = 0.0
+max_delta_rad = 0.0
+target_speed_rad_s = 0.0
+feedback_speed_rad_s = 0.0
+tracking_error_rad = 0.0
+duration_s = 0.0

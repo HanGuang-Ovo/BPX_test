@@ -1,0 +1,163 @@
+# SDK 索引是文档映射建议；sign=1/offset=0 是占位值，未经实物确认。
+# minimum/maximum 使用模型坐标系 rad；工作范围在实测后填写，不自动探测机械极限。
+[identity]
+serial_number = ""
+robot_model = ""
+firmware_version = ""
+
+[imu]
+verified = false
+# 行优先：v_body = sensor_to_body @ v_sensor。
+sensor_to_body = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+gyro_bias = [0, 0, 0]
+# 需确认 SDK 四元数表示的是 sensor->world 还是 body->world。
+quaternion_frame = "body_to_world"
+
+[odometry]
+# 只有 48 维 Actor 需要确认机体系线速度的参考点/坐标/单位。
+verified = false
+
+[[joints]]
+name = "fl_hip_roll_joint"
+sdk_index = 0
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "fr_hip_roll_joint"
+sdk_index = 3
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "hl_hip_roll_joint"
+sdk_index = 6
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "hr_hip_roll_joint"
+sdk_index = 9
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "fl_hip_pitch_joint"
+sdk_index = 1
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "fr_hip_pitch_joint"
+sdk_index = 4
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "hl_hip_pitch_joint"
+sdk_index = 7
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "hr_hip_pitch_joint"
+sdk_index = 10
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "fl_knee_joint"
+sdk_index = 2
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "fr_knee_joint"
+sdk_index = 5
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "hl_knee_joint"
+sdk_index = 8
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+
+[[joints]]
+name = "hr_knee_joint"
+sdk_index = 11
+sign = 1
+offset = 0.0
+mapping_verified = false
+direction_verified = false
+offset_verified = false
+limits_verified = false
+# minimum = <实测工作下限>
+# maximum = <实测工作上限>
+

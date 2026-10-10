@@ -66,6 +66,11 @@ datasets
 
 # Tests
 tests/
+!/sim2real/tests/
+!/sim2real/tests/**
 
 # Docker history
 .isaac-lab-docker-history
+
+# 本机实物标定与运行配置保存在现场，模板进入版本控制。
+sim2real/config/local.*.toml

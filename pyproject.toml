@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bpx-deployment"
+version = "0.1.0"
+description = "BPX shared policy runtime and staged sim2real tools"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+inference = ["onnxruntime>=1.16"]
+
+[project.scripts]
+bpx-real = "bpx_sim2real.cli:main"
+
+[tool.setuptools]
+packages = ["bpx_runtime", "bpx_sim2real"]
+package-dir = {bpx_sim2real = "sim2real/bpx_sim2real"}
+
+[tool.setuptools.data-files]
+"share/bpx-deployment/config" = ["sim2real/config/runtime.toml", "sim2real/config/joint_calibration.template.toml"]

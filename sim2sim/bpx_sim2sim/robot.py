@@ -10,6 +10,7 @@ import numpy as np
 import numpy.typing as npt
 
 from .config import Sim2SimConfig
+from bpx_runtime.math import rotate_world_to_body
 
 FloatArray = npt.NDArray[np.floating]
 
@@ -21,23 +22,6 @@ class RobotState:
     projected_gravity: FloatArray
     joint_position: FloatArray
     joint_velocity: FloatArray
-
-
-def rotate_world_to_body(quaternion_wxyz: FloatArray, vector_world: FloatArray) -> FloatArray:
-    """用 MuJoCo 的 wxyz 四元数把世界坐标向量转换到机体坐标。"""
-
-    quaternion = np.asarray(quaternion_wxyz, dtype=np.float64)
-    quaternion = quaternion / np.linalg.norm(quaternion)
-    w, x, y, z = quaternion
-    rotation_body_to_world = np.array(
-        [
-            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
-            [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
-            [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
-        ],
-        dtype=np.float64,
-    )
-    return rotation_body_to_world.T @ np.asarray(vector_world, dtype=np.float64)
 
 
 class BpxMujocoRobot:
