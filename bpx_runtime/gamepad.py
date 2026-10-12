@@ -1,4 +1,4 @@
-"""Read a Linux gamepad for BPX simulation or read-only hardware monitoring.
+"""Read a Linux gamepad for BPX simulation, deployment or read-only monitoring.
 
 This module intentionally uses the kernel ``input-event`` interface directly,
 so the runtime does not need python-evdev or hidapi. It never sends robot commands.
@@ -18,6 +18,8 @@ import numpy.typing as npt
 
 EV_KEY = 0x01
 EV_ABS = 0x03
+EV_SYN = 0x00
+SYN_DROPPED = 3
 EVENT_STRUCT = struct.Struct("llHHi")
 ABS_INFO_STRUCT = struct.Struct("iiiiii")
 
@@ -265,6 +267,8 @@ class GamepadCommandSource:
                     self._pending[EVENT_STRUCT.size :],
                 )
                 _seconds, _microseconds, event_type, code, value = EVENT_STRUCT.unpack(raw_event)
+                if event_type == EV_SYN and code == SYN_DROPPED:
+                    raise OSError("手柄事件丢失（SYN_DROPPED）；需重新检查输入")
                 if event_type == EV_ABS and code in self._values:
                     self._values[code] = value
                 elif event_type == EV_KEY:

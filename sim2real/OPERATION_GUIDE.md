@@ -193,10 +193,96 @@ verified = true
 python sim2real/run.py --config sim2real/config/local.runtime.toml run
 ```
 
-运动参数就绪后，保持支撑和现场停止措施，才开启 allow_motion 并显式 --live --arm。
-从已验证站姿接管，当前实机代码没有自动起身功能。
-运行到期/Ctrl+C 会尝试清零退出，不先执行减速停车；清零可能释放支撑力。
-当前运动 CLI 使用常量 command，没有在线手柄/停车接口。先验证站立与退出，再安排行走试验。
+### 实机手柄流程
+
+实机与 sim2sim 共用 `bpx_runtime/supervisor.py` 的状态机和
+`bpx_runtime/init_controller.py` 的足端五次轨迹、解析 IK。默认操作为：
+
+```text
+水平趴姿接管 → WAITING_INIT ── RB 按下沿 ──→ INIT
+INIT ── 轨迹完成且连续稳定 ──→ STAND
+STAND ── 持续摇杆输入 ──→ WALK
+WALK ── 松杆 ──→ STOPPING ── 稳定确认或超时 ──→ STAND
+STOPPING ── 再次持续输入 ──→ WALK
+异常 → DISABLED → 结束本次控制
+```
+
+- `WAITING_INIT` 保持接管时实测趴姿，速度为零，不运行 Stand/Walk 模型；
+  `[control].prone_joint_position` 仅用于接管范围核对，不把本体强拉到模板姿态。
+- RB (`BTN_TR=311`) 每次松开到按下触发一次；一直按住不重复起身。
+  已站立、起身中或行走中按 RB 不重新起身。若本体已符合站姿接管条件，可直接进入 Stand。
+- `INIT` 从实测姿态开始，先收脚到低位支撑，再竖直伸展。轨迹按发送频率更新；
+  跟踪误差过大时暂停，四足接地估计未满足时停在支撑点，超时则禁用并退出。
+  轨迹完成、高度/倾角/线角速度及四足接地条件连续满足 `init_confirm_time` 后进入 Stand。
+- 左摇杆上下/左右对应 vx/vy，右摇杆左右对应 wz，死区 0.1；速度范围来自
+  `[control].command_limit`。可选 `--gamepad-deadman`：按住 LB 才接收速度，RB 独立生效。
+- Stand/Walk 迟滞、最小行走时间、STOPPING 的再启动防抖、速度稳定确认和超时
+  与 sim2sim 使用同一实现。STOPPING 继续使用 Walk 模型并平滑速度至零；Stand 指令恒为零。
+  历史观测记录最终成功发送的 action，起身转 Stand 时重建 Stand 历史并平滑接管。
+
+### 实机反馈与配置确认
+
+SDK 没有足端接触传感器接口，本实现仅支持 **BPX 在水平地面上的接地估计**。
+行为图与 sim2sim 一致，反馈来源不同：实机高度为 `LegOdom.position[2] - ground_z`，
+平面速度来自 `velocity_body`，姿态/角速度来自已对齐 IMU。
+即使 Actor 是 450 维、观测不使用线速度，实机状态机仍要求新鲜、已验证的里程计。
+缺失、过期、会话变化及手柄断开/事件丢失均结束控制，不自动重连恢复运动。
+
+接地估计同时要求：足底运动学高度接近配置地面、反馈力矩反解的向上支撑力超过阈值，
+且 Jacobian 非奇异。使用官方 BPX 连杆和足底圆柱尺寸，力矩先重排、乘方向 sign 并减去
+`torque_bias_nm`，按静态近似 `tau = -J^T F` 反解支撑力。
+这不是接触传感器测量；腿部重力、惯性、里程计漂移、足底形变及吊装外力都可能影响估计。
+日志字段明确记录 `feet_in_contact_estimated`、足底高度、支撑力和估计有效性。
+没有可靠的高度/力矩反馈时，不能用固定高度或“默认四足接地”代替验收。
+
+本机配置新增的确认项默认保持 false，完成实际核对后再设置：
+
+| 配置项 | 确认内容 |
+| --- | --- |
+| `control.prone_handover_verified` | 实际水平趴姿在接管范围内，等待期间的支撑/增益正确 |
+| `init_controller.verified` | 实机收脚/抬升轨迹、起身增益、限速、限矩、暂停及超时行为 |
+| `supervisor.feedback_verified` | 里程计高度、速度、Nm 力矩方向、地面和接地估计可靠 |
+| 标定文件 `odometry.verified` | SDK 里程计坐标、单位及更新信息已核对 |
+
+`ground_z` 应按里程计 z 与实测机体参考原点高度确定，不假定启动时里程计零点就是地面。
+`toe_radius/toe_center_depth/toe_half_width`、接地高度容差、支撑力阈值和力矩偏置须按实际足底
+及反馈核对。`[init_controller]` 的 80/2 增益、30 Nm 和 4 秒轨迹来自仿真基线，不能视为
+实机已验证参数。发送增益在起身前后平滑切换，软件限矩按当次实际发送增益计算，
+同时受实测固件限矩和 Init 限矩约束。
+
+原有身份、固件保护、站姿接管及全部软件保护仍需就绪。
+`[safety].max_tilt_rad` 是额外的实机硬停止阈值；若比 Supervisor 阈值严格，会提前禁用，
+新增起身不会自动放宽它。当前模板 0.45 rad 比 `init_abort_tilt=0.55` 更严格。
+
+### 启动与退出
+
+先只做预检查（不会创建 SDK 对象）：
+
+```bash
+python sim2real/run.py --config sim2real/config/local.runtime.toml run
+```
+
+`blockers` 为空、运动条件已经确认，保持本体支撑和现场停止措施，再开启
+`allow_motion` 并运行；默认自动选择单个手柄：
+
+```bash
+python sim2real/run.py --config sim2real/config/local.runtime.toml run \
+  --live --arm \
+  --output "outputs/sim2real/live-$(date +%Y%m%d-%H%M%S).jsonl"
+```
+
+启动后终端显示状态，趴姿时等待 RB。多个手柄使用 `--gamepad-index 0`，或
+`--gamepad-device /dev/input/eventN`，两者互斥。省略 `--duration` 会持续运行；
+指定 `--duration 60` 则从接管开始计时 60 秒，等待 RB 的时间也计入。
+不要在默认手柄模式添加固定速度参数。
+
+仅从已站姿进行固定指令试验，可显式选 `--command-source constant --vx 0 --vy 0 --wz 0`；
+该模式没有起身请求源，趴姿会一直等待，不会自动起身。
+
+松开摇杆通过 STOPPING 减速回 Stand，进程继续保持支撑。
+**Ctrl+C、运行到期或故障会退出控制，并尝试清零关节指令，不先完成 STOPPING；
+清零可能释放支撑力。** 先确认实际退出/看门狗行为，不能把进程退出当作保持站立或坐下。
+只读窗口仍不发送运动和起身命令，也不接管这个运行中的控制进程。
 
 ## 7. 软件验证
 

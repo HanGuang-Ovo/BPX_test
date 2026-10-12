@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from bpx_runtime.history import ObservationHistory
 from bpx_runtime.joints import DEFAULT_JOINT_POSITION
+from bpx_runtime.supervisor import BehaviorMode, SupervisorDecision
 from bpx_sim2real.calibration import Calibration
 from bpx_sim2real.cli import main
 from bpx_sim2real.config import load_config
@@ -38,6 +39,7 @@ def config(ready=False):
     raw, cal = copy.deepcopy(cfg.runtime), copy.deepcopy(cfg.calibration)
     cal["identity"] = {"serial_number": "test-SN", "robot_model": "BPX", "firmware_version": "1.0.15"}
     cal["alignment"]["verified"] = True
+    cal["odometry"]["verified"] = True
     raw["safety"].update(
         allow_motion=True,
         target_speed_rad_s=[1.0] * 12,
@@ -55,7 +57,10 @@ def config(ready=False):
         robot_torque_limit_nm=[30.0] * 12,
         shutdown_action="zero_joint_command",
     )
-    raw["control"].update(gains_verified=True, standing_handover_verified=True, send_rate_hz=100)
+    raw["control"].update(gains_verified=True, standing_handover_verified=True,
+                          prone_handover_verified=True, send_rate_hz=100)
+    raw["init_controller"]["verified"] = True
+    raw["supervisor"]["feedback_verified"] = True
     joints = tuple(replace(j, minimum=-3.0, maximum=3.0) for j in cfg.joints)
     return replace(cfg, runtime=raw, calibration=cal, joints=joints)
 
@@ -77,6 +82,10 @@ def sample(cfg=None, t=0.0, token=1, **changes):
         imu_token=token,
         joint_age_s=0.0,
         imu_age_s=0.0,
+        odom_token=token,
+        odom_age_s=0.0,
+        velocity_body=[0., 0., 0.],
+        odom_position=[0., 0., .37],
         identity={**cfg.calibration["identity"], "sdk_version": "1.0.9"},
     )
     return Sample(**{**data, **changes})
@@ -219,6 +228,32 @@ class RuntimeTest(unittest.TestCase):
         controller.commit_target(target)
         controller.step(sample(cfg, t=0.02, token=2), (0, 0, 0))
         np.testing.assert_allclose(policy.observations[-1][-12:], 0.06, atol=1e-7)
+
+    def test_actor_bounds_external_supervisor_command_before_observation(self):
+        cfg = config()
+        limits = np.asarray(cfg.control["command_limit"])
+        for sign in (1., -1.):
+            with self.subTest(sign=sign):
+                policy = Policy(0.)
+                controller = ActorController(cfg, policies={"walk": policy, "stand": policy})
+                raw = sign * np.array([5., -2., 3.])
+                decision = SupervisorDecision(BehaviorMode.WALK, raw, True, "test")
+                result = controller.step(sample(cfg), raw, decision=decision)
+                expected = np.clip(raw, -limits, limits)
+                np.testing.assert_allclose(result["command"], expected)
+                commands = policy.observations[-1][60:90].reshape(10, 3)
+                np.testing.assert_allclose(commands, np.tile(expected, (10, 1)))
+
+    def test_actor_rejects_invalid_supervisor_command_before_clipping(self):
+        cfg = config()
+        for command in ([np.inf, 0., 0.], [np.nan, 0., 0.], [1., 2.]):
+            with self.subTest(command=command):
+                policy = Policy(0.)
+                controller = ActorController(cfg, policies={"walk": policy, "stand": policy})
+                decision = SupervisorDecision(BehaviorMode.WALK, np.asarray(command), True, "test")
+                with self.assertRaises(ValueError):
+                    controller.step(sample(cfg), (0., 0., 0.), decision=decision)
+                self.assertEqual(policy.observations, [])
 
     def test_replay_resampling_has_no_future_state_and_increases_age(self):
         cfg = config()

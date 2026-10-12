@@ -7,6 +7,9 @@ import math
 from pathlib import Path
 import tomllib
 
+from bpx_runtime.supervisor import SupervisorConfig
+from bpx_runtime.init_controller import InitControllerConfig
+
 
 @dataclass(frozen=True)
 class PathConfig:
@@ -96,74 +99,9 @@ class TerminationConfig:
 
 
 @dataclass(frozen=True)
-class SupervisorConfig:
-    """上层状态机、command 过滤器和策略切换器的集中参数。
-
-    参数放在 TOML 而不是写死在状态机里，是为了能够通过日志逐步调节阈值，同时保证
-    每次实验的切换条件可复现。
-    """
-
-    command_scale: tuple[float, float, float]
-    command_slew_rate: tuple[float, float, float]
-    walk_enter_threshold: float
-    walk_exit_threshold: float
-    walk_enter_delay: float
-    walk_exit_delay: float
-    minimum_walk_time: float
-    stop_linear_speed: float
-    stop_angular_speed: float
-    stand_confirm_time: float
-    stopping_timeout: float
-    fall_base_height: float
-    fall_tilt: float
-    init_start_max_tilt: float
-    init_abort_tilt: float
-    init_base_height: float
-    init_tilt: float
-    init_confirm_time: float
-    action_blend_duration: float
-
-    @property
-    def recovery_base_height(self) -> float:
-        """旧 Recovery 字段名的只读兼容入口。"""
-
-        return self.init_base_height
-
-    @property
-    def recovery_tilt(self) -> float:
-        """旧 Recovery 字段名的只读兼容入口。"""
-
-        return self.init_tilt
-
-    @property
-    def recovery_confirm_time(self) -> float:
-        """旧 Recovery 字段名的只读兼容入口。"""
-
-        return self.init_confirm_time
-
-
-@dataclass(frozen=True)
 class TerrainConfig:
     kind: str = "flat"
     seed: int = 20260918
-
-
-@dataclass(frozen=True)
-class InitControllerConfig:
-    """MuJoCo 足端轨迹起身；depth 为髋到 toe link 原点的竖直距离。"""
-
-    mode: str = "policy"
-    duration: float = 4.0
-    support_duration: float = 1.0
-    support_depth: float = 0.19
-    standing_depth: float = 0.38
-    stiffness: float = 80.0
-    # 5 ms 显式 PD 下，Kd=3 曾在趴姿静置后触发起身时产生高频振荡。
-    damping: float = 2.0
-    torque_limit: float = 30.0
-    joint_speed_limit: float = 2.0
-    tracking_error_limit: float = 0.35
-    timeout: float = 8.0
 
 
 @dataclass(frozen=True)

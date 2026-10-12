@@ -278,7 +278,7 @@ SDK 目标 = sign × (策略 q − offset)
 
 | 显示 | 来源和含义 |
 |---|---|
-| 当前策略（只读状态机） | 与实机部署共用 Stand/Walk/STOPPING 路由逻辑，由反馈有效性和电脑手柄输入自动选择 |
+| 当前策略（只读状态机） | 使用 Stand/Walk/STOPPING 预览路由，由反馈有效性和电脑手柄输入自动选择，不执行实机起身状态机 |
 | 机器人反馈 | SDK 的运动状态、步态和控制来源；这是固件反馈，不是本机神经网络名称 |
 | 电脑遥控器输入 | USB/蓝牙手柄经轴映射、死区和速度范围换算后的 vx/vy/wz，未发送 |
 
@@ -297,7 +297,7 @@ SDK 目标 = sign × (策略 q − offset)
 | STOPPING | 松开摇杆并满足退出延时后，继续使用 Walk，逐步回到零 command；过渡结束后回 Stand |
 | 暂停 / 等待 | 无手柄、反馈过期、状态不适用或倾角超限，不显示当前策略目标 |
 
-当前模板按 `max(abs(command)/command_limit)` 衡量输入强度：进入阈值 0.12、持续 0.15 s；退出阈值 0.05、持续 0.30 s；最短 Walk 时间 0.30 s，STOPPING 1.5 s。完整参数在 `[control]`，窗口与部署共用同一实现。它只复用路由和 command 限变化率，不执行部署中的关节接管、动作混合或目标保护。
+当前模板按 `max(abs(command)/command_limit)` 衡量输入强度：进入阈值 0.12、持续 0.15 s；退出阈值 0.05、持续 0.30 s；最短 Walk 时间 0.30 s，STOPPING 1.5 s。预览参数在 `[control]`，窗口使用简化路由及 command 限变化率。实机入口与 sim2sim 共用完整 Supervisor，另按实测速度连续稳定判定 STOPPING 完成，并支持 WAITING_INIT/INIT。窗口不执行这些验收、关节接管、动作混合或目标保护。
 
 ![自动切换到 Walk 后的窗口截图](docs/window_guide/screenshots/03-walk.png)
 
@@ -662,7 +662,7 @@ python sim2real/run.py --config sim2real/config/local.runtime.toml analyze \
 | 关节和 IMU 坐标转换 | [calibration.py](bpx_sim2real/calibration.py) |
 | 默认映射、模型范围、就绪检查 | [config.py](bpx_sim2real/config.py) |
 | 电脑手柄读取 | [monitor_input.py](bpx_sim2real/monitor_input.py)、[公共手柄接口](../bpx_runtime/gamepad.py) |
-| 共用 Stand/Walk/STOPPING 路由 | [routing.py](../bpx_runtime/routing.py) |
+| 只读 Stand/Walk/STOPPING 预览路由 | [routing.py](../bpx_runtime/routing.py) |
 | SDK 缓存读取与年龄计算 | [sdk_robot.py](bpx_sim2real/sdk_robot.py) |
 | 状态和实际运动目标保护 | [safety.py](bpx_sim2real/safety.py) |
 | 已有策略顺序与默认角 | [公共关节定义](../bpx_runtime/joints.py) |

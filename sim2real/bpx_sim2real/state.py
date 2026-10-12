@@ -24,6 +24,7 @@ class Sample:
     odom_age_s: float | None = None
     telemetry: dict = field(default_factory=dict)
     identity: dict = field(default_factory=dict)
+    odom_position: list | None = None
 
     def to_dict(self):
         return asdict(self)

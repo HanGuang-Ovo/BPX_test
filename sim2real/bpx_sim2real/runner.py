@@ -5,6 +5,7 @@ import time
 import numpy as np
 
 from .controller import ActorController
+from .behavior import HardwareController
 from .recording import JsonlWriter, load_samples, resample
 from .safety import StateGuard, TargetGuard, require_ready
 from .sdk_robot import SDKSource
@@ -56,10 +57,11 @@ def wait_for_feedback(source, guard, timeout, *, require_imu=True, clock=time.mo
         if not sample.connected:
             raise RuntimeError("初始化期间断连")
         try:
-            guard.check(sample, require_imu=require_imu, hardware=True)
+            guard.check(sample, require_imu=require_imu, hardware=True, require_odometry=True)
         except (RuntimeError, ValueError):
             # 缺少启动反馈可以等待，已收到身份不匹配等确定错误立即拒绝。
-            if sample.q is not None and (not require_imu or sample.quat_xyzw is not None):
+            if (sample.q is not None and (not require_imu or sample.quat_xyzw is not None)
+                    and sample.odom_position is not None and sample.velocity_body is not None):
                 raise
             sleep(.005)
             continue
@@ -73,66 +75,81 @@ def wait_for_feedback(source, guard, timeout, *, require_imu=True, clock=time.mo
 
 
 def run_live(config, output_path, command, duration, *, armed=False, policies=None, source_factory=SDKSource,
-             clock=time.monotonic, sleep=time.sleep):
+             clock=time.monotonic, sleep=time.sleep, command_source=None, init_request_source=None,
+             status_callback=None):
     require_ready(config, "deploy")
     if not armed:
-        raise RuntimeError("实机策略需要显式 --live --arm，并从已确认站姿接管")
-    if not np.isfinite(duration) or duration <= 0:
-        raise ValueError("duration 必须为有限正数")
+        raise RuntimeError("实机策略需要显式 --live --arm")
+    if duration is not None and (not np.isfinite(duration) or duration <= 0):
+        raise ValueError("duration 必须为有限正数；不指定则运行至中断")
     if np.asarray(command).shape != (3,) or not np.isfinite(command).all():
         raise ValueError("command 必须为三个有限数")
-    controller = ActorController(config, policies=policies)  # 模型失败时尚未连接硬件。
+    controller = HardwareController(config, policies=policies)  # 模型/轨迹失败时尚未连接硬件。
     guard = StateGuard(config)
     cal = controller.calibration
-    kp = cal.gains_to_sdk(config.control["kp"])
-    kd = cal.gains_to_sdk(config.control["kd"])
     zeros = np.zeros(12)
     send_period = 1. / config.control["send_rate_hz"]
     max_late = min(config.safety["max_cycle_lateness_s"], config.period)
     with JsonlWriter(output_path, {"mode": "live", "config": str(config.path), "runtime": config.runtime,
-                                 "calibration": config.calibration}) as log:
+                                 "calibration": config.calibration, "duration_s": duration,
+                                 "command_source": "dynamic" if command_source is not None else "constant"}) as log:
         with source_factory(config, joint_control=True) as source:
             sample = wait_for_feedback(source, guard, config.network["connect_timeout_s"], clock=clock, sleep=sleep)
             q = cal.position_from_sdk(sample.q)
-            if np.any(np.abs(q-cal.default) > np.asarray(config.safety["takeover_position_error_rad"])):
-                raise RuntimeError("实测姿态不符合已确认站立接管范围；本入口不自动起身")
+            controller.initialize(sample)
             target_guard = TargetGuard(config, q)
             start = clock()
             send_index = policy_index = 0
             target = q.copy()
             result = None
+            previous_mode = None
             while True:
                 deadline = start + send_index * send_period
                 remaining = deadline-clock()
                 if remaining > 0:
                     sleep(remaining)
                 now = clock()
-                if now-start + 1e-9 >= duration:
+                if duration is not None and now-start + 1e-9 >= duration:
                     break
                 if now-deadline > max_late:
                     raise RuntimeError("命令发送循环超期；停止当前控制")
                 sample = source.read()
-                guard.check(sample, clock(), hardware=True)
-                if now + 1e-9 >= start + policy_index * config.period:
+                guard.check(sample, clock(), hardware=True, require_odometry=True)
+                policy_due = now + 1e-9 >= start + policy_index * config.period
+                init_requested = False
+                if policy_due:
                     if now - (start + policy_index * config.period) > max_late:
                         raise RuntimeError("策略周期超期；禁止补跑过期历史帧")
-                    result = controller.step(sample, command)
-                    target = np.asarray(result["target_model"])
+                    if command_source is not None:
+                        command = command_source()
+                    init_requested = bool(init_request_source()) if init_request_source is not None else False
                     policy_index += 1
+                result = controller.step(sample, command, now=now, policy_due=policy_due,
+                                         init_requested=init_requested)
+                target = np.asarray(result["target_model"])
                 q = cal.position_from_sdk(sample.q)
                 dq = cal.velocity_from_sdk(sample.dq)
-                processed, tau, constrained = target_guard.preview(target, q, dq, send_period)
+                limit = ([config.init_controller.torque_limit] * 12 if controller.mode == "init" else None)
+                processed, tau, constrained = target_guard.preview(
+                    target, q, dq, send_period, kp=controller.kp, kd=controller.kd, torque_limit=limit)
                 # 推理耗时计入期限与新鲜度，不能在超期后再发一条目标。
                 after = clock()
-                guard.check(sample, after, hardware=True)
+                guard.check(sample, after, hardware=True, require_odometry=True)
                 if after-deadline > max_late:
                     raise RuntimeError("推理/状态读取导致发送超期")
-                source.send(kp, cal.position_to_sdk(processed), kd, zeros, zeros)
+                source.send(cal.gains_to_sdk(controller.kp), cal.position_to_sdk(processed),
+                            cal.gains_to_sdk(controller.kd), zeros, zeros)
                 target_guard.commit(processed)
                 controller.commit_target(processed)
+                if controller.mode != previous_mode:
+                    if status_callback is not None:
+                        status_callback(controller.mode, result["reason"])
+                    previous_mode = controller.mode
                 log.write({"type": "command", "host_time": after, "mode": controller.mode,
+                           "raw_command": np.asarray(command).tolist(), "init_requested": init_requested,
                            "target_model": processed.tolist(), "target_sdk": cal.position_to_sdk(processed).tolist(),
                            "estimated_torque": tau.tolist(), "constrained": constrained,
+                           "kp_model": controller.kp.tolist(), "kd_model": controller.kd.tolist(),
                            "sample": sample.to_dict(), "policy": result if policy_index else None})
                 send_index += 1
     return policy_index

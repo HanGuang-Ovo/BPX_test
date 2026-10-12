@@ -8,6 +8,8 @@ import tomllib
 import numpy as np
 
 from bpx_runtime.joints import POLICY_JOINT_NAMES, SDK_JOINT_NAMES, DEFAULT_JOINT_POSITION
+from bpx_runtime.supervisor import SupervisorConfig
+from bpx_runtime.init_controller import InitControllerConfig
 
 # 官方 BPX/bpx/urdf/bpx.urdf 的模型范围；不代表固件限矩或机械验收。
 OFFICIAL_JOINT_LIMITS = ((-.8727, .8727),) * 4 + ((-.7854, 2.60661),) * 4 + ((-2.7531, -.5539),) * 4
@@ -68,6 +70,32 @@ class Config:
         return self.runtime["firmware"]
 
     @property
+    def init_controller(self):
+        return InitControllerConfig(**{
+            k: v for k, v in self.runtime["init_controller"].items()
+            if k in InitControllerConfig.__dataclass_fields__
+        })
+
+    @property
+    def supervisor(self):
+        control = self.control
+        return SupervisorConfig(
+            command_scale=tuple(control["command_limit"]),
+            command_slew_rate=tuple(control["command_slew_rate"]),
+            walk_enter_threshold=control["walk_enter_threshold"],
+            walk_exit_threshold=control["walk_exit_threshold"],
+            walk_enter_delay=control["walk_enter_delay_s"],
+            walk_exit_delay=control["walk_exit_delay_s"],
+            minimum_walk_time=control["minimum_walk_time_s"],
+            stopping_timeout=control["stopping_duration_s"],
+            action_blend_duration=control["action_blend_duration_s"],
+            **{k: self.runtime["supervisor"][k] for k in (
+                "stop_linear_speed", "stop_angular_speed", "stand_confirm_time",
+                "fall_base_height", "fall_tilt", "init_start_max_tilt", "init_abort_tilt",
+                "init_base_height", "init_tilt", "init_confirm_time")},
+        )
+
+    @property
     def period(self):
         return 1.0 / self.control["policy_rate_hz"]
 
@@ -91,6 +119,8 @@ class Config:
         for key in ("serial_number", "robot_model", "firmware_version"):
             if not identity.get(key):
                 reasons.append(f"calibration.identity.{key} 未填写")
+        if identity.get("robot_model") != "BPX":
+            reasons.append("当前实机 Init 几何仅支持已核对的 BPX 型号")
         fw = self.firmware
         for key in ("joint_control_verified", "watchdog_verified", "shutdown_verified",
                     "gain_units_verified", "robot_limits_verified"):
@@ -115,6 +145,14 @@ class Config:
             reasons.append("control.gains_verified=false")
         if not self.control.get("standing_handover_verified", False):
             reasons.append("control.standing_handover_verified=false")
+        if not self.control.get("prone_handover_verified", False):
+            reasons.append("control.prone_handover_verified=false")
+        if not self.runtime["init_controller"]["verified"]:
+            reasons.append("init_controller.verified=false；需验证实机起身轨迹与增益")
+        if not self.runtime["supervisor"]["feedback_verified"]:
+            reasons.append("supervisor.feedback_verified=false；需验证高度与接地估计")
+        if self.calibration["odometry"].get("verified") is not True:
+            reasons.append("calibration.odometry.verified=false；实机状态机需要里程计")
         for mode in ("walk", "stand"):
             if not self.model_path(mode).is_file():
                 reasons.append(f"policy.{mode}_model 不存在")
@@ -169,6 +207,43 @@ def load_config(path):
     if policy["action_scale"] != 0.5:
         raise ValueError("当前模型的 action_scale 必须为 0.5")
     control = raw["control"]
+    control.setdefault("prone_handover_verified", False)
+    control.setdefault("prone_joint_position", [0.] * 4 + [.98] * 4 + [-2.62] * 4)
+    init = raw.setdefault("init_controller", {})
+    for key, value in asdict(InitControllerConfig(mode="pd")).items():
+        init.setdefault(key, value)
+    init.setdefault("verified", False)
+    behavior = raw.setdefault("supervisor", {})
+    defaults = dict(stop_linear_speed=.05, stop_angular_speed=.10, stand_confirm_time=.20,
+                    fall_base_height=.20, fall_tilt=.70, init_start_max_tilt=.35,
+                    init_abort_tilt=.55, init_base_height=.36, init_tilt=.25, init_confirm_time=.50,
+                    feedback_verified=False, ground_z=0., toe_radius=.027,
+                    toe_center_depth=.012, toe_half_width=.0179,
+                    contact_height_tolerance=.025, contact_force_threshold_n=5.,
+                    contact_jacobian_condition_max=100., torque_bias_nm=[0.] * 12)
+    for key, value in defaults.items():
+        behavior.setdefault(key, value)
+    vector(control["prone_joint_position"], 12, "control.prone_joint_position")
+    if init["mode"] != "pd":
+        raise ValueError("实机 Init 仅支持 mode=pd")
+    for key in InitControllerConfig.__dataclass_fields__:
+        if key != "mode":
+            positive(init[key], f"init_controller.{key}")
+    if not init["support_duration"] < init["duration"] < init["timeout"]:
+        raise ValueError("Init 要求 support_duration < duration < timeout")
+    if init["support_depth"] >= init["standing_depth"]:
+        raise ValueError("Init 要求 support_depth < standing_depth")
+    for key in defaults:
+        if key not in ("feedback_verified", "ground_z", "torque_bias_nm"):
+            positive(behavior[key], f"supervisor.{key}")
+    if not math.isfinite(behavior["ground_z"]):
+        raise ValueError("supervisor.ground_z 必须有限")
+    vector(behavior["torque_bias_nm"], 12, "supervisor.torque_bias_nm")
+    if not (behavior["init_tilt"] < behavior["init_start_max_tilt"]
+            < behavior["init_abort_tilt"] <= behavior["fall_tilt"] < np.pi / 2):
+        raise ValueError("Init/跌倒倾角阈值顺序无效")
+    if behavior["init_base_height"] <= behavior["fall_base_height"]:
+        raise ValueError("Init 完成高度必须高于跌倒高度")
     if control["policy_rate_hz"] != 50:
         raise ValueError("当前策略及历史必须按 50 Hz 更新")
     positive(control["send_rate_hz"], "control.send_rate_hz")
@@ -194,7 +269,8 @@ def load_config(path):
     fw = raw["firmware"]
     booleans = [(safety, "allow_motion"), (control, "gains_verified"),
                 (control, "standing_handover_verified"), (calibration["alignment"], "verified"),
-                (calibration["odometry"], "verified")]
+                (calibration["odometry"], "verified"), (control, "prone_handover_verified"),
+                (init, "verified"), (behavior, "feedback_verified")]
     booleans += [(fw, k) for k in ("joint_control_verified", "watchdog_verified", "shutdown_verified",
                                   "gain_units_verified", "robot_limits_verified")]
     if any(not isinstance(section[key], bool) for section, key in booleans):

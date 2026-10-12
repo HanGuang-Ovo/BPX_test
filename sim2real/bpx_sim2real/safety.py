@@ -18,7 +18,7 @@ class StateGuard:
         self.config = config
         self.session = None
 
-    def check(self, sample, now=None, *, require_imu=True, hardware=False):
+    def check(self, sample, now=None, *, require_imu=True, hardware=False, require_odometry=False):
         now = sample.host_time if now is None else now
         if not sample.connected:
             raise RuntimeError("状态连接断开；需要重新使能")
@@ -36,11 +36,13 @@ class StateGuard:
             groups.append("imu")
             vector(sample.quat_xyzw, 4, "IMU quat")
             vector(sample.omega, 3, "IMU omega")
-        if require_imu and self.config.policy["include_base_lin_vel"]:
+        if require_odometry or (require_imu and self.config.policy["include_base_lin_vel"]):
             groups.append("odom")
             vector(sample.velocity_body, 3, "body velocity")
+            if require_odometry:
+                vector(sample.odom_position, 3, "odometry position")
             if self.config.calibration["odometry"].get("verified") is not True and hardware:
-                raise RuntimeError("48 维 Actor 所需里程计尚未确认")
+                raise RuntimeError("实机状态机/Actor 所需里程计尚未确认")
         ages = []
         for group in groups:
             age = getattr(sample, f"{group}_age_s")
@@ -79,7 +81,7 @@ class TargetGuard:
         self.tracking = vector(config.safety["tracking_error_rad"], 12, "tracking error", positive=True)
         self.torque_limit = vector(config.firmware["robot_torque_limit_nm"], 12, "robot torque limit", positive=True)
 
-    def preview(self, target, q, dq, dt):
+    def preview(self, target, q, dq, dt, *, kp=None, kd=None, torque_limit=None):
         q = vector(q, 12, "position")
         dq = vector(dq, 12, "velocity")
         if not math.isfinite(dt) or dt <= 0:
@@ -92,8 +94,12 @@ class TargetGuard:
             raise RuntimeError("实际关节对上一目标的跟踪误差超限")
         desired = np.clip(vector(target, 12, "target"), self.low, self.high)
         processed = self.last + np.clip(desired - self.last, -self.speed * dt, self.speed * dt)
-        estimated_torque = np.asarray(self.config.control["kp"]) * (processed - q) - np.asarray(self.config.control["kd"]) * dq
-        if np.any(np.abs(estimated_torque) > self.torque_limit):
+        kp = vector(self.config.control["kp"] if kp is None else kp, 12, "active kp", positive=True)
+        kd = vector(self.config.control["kd"] if kd is None else kd, 12, "active kd", positive=True)
+        limit = self.torque_limit if torque_limit is None else np.minimum(
+            self.torque_limit, vector(torque_limit, 12, "active torque limit", positive=True))
+        estimated_torque = kp * (processed - q) - kd * dq
+        if np.any(np.abs(estimated_torque) > limit):
             raise RuntimeError("按配置 PD 估算的力矩超限；此检查不替代固件限矩")
         return processed, estimated_torque, bool(np.any(np.abs(processed - target) > 1e-7))
 

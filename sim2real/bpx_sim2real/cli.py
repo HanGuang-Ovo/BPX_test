@@ -1,6 +1,7 @@
 """分阶段命令行。check/analyze/replay 不实例化 SDK。"""
 
 import argparse
+from contextlib import ExitStack
 from datetime import datetime
 import hashlib
 import importlib.util
@@ -10,10 +11,12 @@ import sys
 import time
 
 from bpx_runtime.joints import SDK_JOINT_NAMES
+from bpx_runtime.gamepad import GamepadCommandSource, select_gamepad, BTN_TL, BTN_TR
 from .config import load_config, positive
 from .recording import JsonlWriter, load_samples, summarize
 from .runner import replay, run_live
 from .sdk_robot import SDKSource
+from .safety import require_ready
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "config/runtime.toml"
 if not DEFAULT_CONFIG.is_file():
@@ -136,11 +139,17 @@ def parser():
     run = sub.add_parser("run", help="默认仅检查就绪项；实机需要 --live --arm")
     run.add_argument("--live", action="store_true")
     run.add_argument("--arm", action="store_true")
-    run.add_argument("--duration", type=float, default=10.0)
+    run.add_argument("--duration", type=float, help="可选运行秒数；省略则运行至 Ctrl+C 或故障")
     run.add_argument("--output", type=Path)
     run.add_argument("--vx", type=float, default=0.0)
     run.add_argument("--vy", type=float, default=0.0)
     run.add_argument("--wz", type=float, default=0.0)
+    run.add_argument("--command-source", choices=("gamepad", "constant"), default="gamepad",
+                     help="默认手柄：RB 起身，摇杆行走；constant 仅提供固定速度，无起身请求")
+    device = run.add_mutually_exclusive_group()
+    device.add_argument("--gamepad-device", type=Path)
+    device.add_argument("--gamepad-index", type=int)
+    run.add_argument("--gamepad-deadman", action="store_true", help="按住 LB 才接受摇杆速度，RB 独立生效")
     return p
 
 
@@ -187,13 +196,28 @@ def main(argv=None):
             else:
                 if args.output is None:
                     raise ValueError("live 策略必须指定 --output 日志")
-                count = run_live(
-                    config,
-                    args.output,
-                    (args.vx, args.vy, args.wz),
-                    positive(args.duration, "duration"),
-                    armed=args.arm,
-                )
+                require_ready(config, "deploy")
+                if not args.arm:
+                    raise ValueError("实机运动必须显式 --arm")
+                duration = positive(args.duration, "duration") if args.duration is not None else None
+                with ExitStack() as stack:
+                    gamepad = None
+                    if args.command_source == "gamepad":
+                        if any((args.vx, args.vy, args.wz)):
+                            raise ValueError("手柄模式不接受固定速度 --vx/--vy/--wz")
+                        device = select_gamepad(args.gamepad_device, args.gamepad_index)
+                        gamepad = stack.enter_context(GamepadCommandSource(
+                            device, tuple(config.control["command_limit"]), init_button=BTN_TR,
+                            deadman_button=BTN_TL if args.gamepad_deadman else None))
+                        print("手柄已连接：趴姿等待 RB 起身；摇杆控制速度。Ctrl+C 退出会清零关节指令。", file=sys.stderr)
+                    elif args.gamepad_device is not None or args.gamepad_index is not None or args.gamepad_deadman:
+                        raise ValueError("constant 模式不能指定手柄参数")
+                    count = run_live(
+                        config, args.output, (args.vx, args.vy, args.wz), duration, armed=args.arm,
+                        command_source=gamepad.read if gamepad else None,
+                        init_request_source=gamepad.consume_init_request if gamepad else None,
+                        status_callback=lambda mode, reason: print(f"状态：{mode} ({reason})", file=sys.stderr),
+                    )
                 result = {"policy_steps": count, "output": str(args.output)}
         print(json.dumps(result, ensure_ascii=False, allow_nan=False, indent=2))
         return 0

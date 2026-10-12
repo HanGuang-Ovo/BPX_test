@@ -11,15 +11,10 @@ import mujoco
 import numpy as np
 
 from .robot import BpxMujocoRobot
+from bpx_runtime.init_controller import LegKinematics as SharedKinematics, FootTrajectory, quintic
 
 
-def quintic(progress: float) -> float:
-    """零起止速度、零起止加速度的五次时间标度。"""
-    s = float(np.clip(progress, 0.0, 1.0))
-    return s * s * s * (10.0 + s * (-15.0 + 6.0 * s))
-
-
-class LegKinematics:
+class LegKinematics(SharedKinematics):
     """BPX 的 x 轴髋横滚 + y 轴髋俯仰/膝结构，固定膝向后弯曲分支。"""
 
     def __init__(self, robot: BpxMujocoRobot):
@@ -54,106 +49,24 @@ class LegKinematics:
         self.upper, self.lower = np.asarray(lengths).T
         self.limits = model.jnt_range[robot.joint_ids].copy()
 
-    def forward(self, joint_position: np.ndarray) -> np.ndarray:
-        a, b, c = np.asarray(joint_position)[self.indices].T
-        x = -self.upper * np.sin(b) - self.lower * np.sin(b + c)
-        z = -self.upper * np.cos(b) - self.lower * np.cos(b + c)
-        return np.column_stack((x, self.offsets * np.cos(a) - z * np.sin(a),
-                                self.offsets * np.sin(a) + z * np.cos(a)))
-
-    def inverse(self, feet: np.ndarray) -> np.ndarray:
-        feet = np.asarray(feet, dtype=float)
-        if feet.shape != (4, 3) or not np.all(np.isfinite(feet)):
-            raise ValueError("Init 足端目标必须为 4x3 有限数组")
-        x, y, z = feet.T
-        radial_squared = y * y + z * z - self.offsets ** 2
-        if np.any(radial_squared <= 0) or np.any(z >= 0):
-            raise ValueError("Init 足端目标超出向下伸腿的可达空间")
-        planar_z = -np.sqrt(radial_squared)
-        roll = (np.arctan2(z, y) - np.arctan2(planar_z, self.offsets) + np.pi) % (2 * np.pi) - np.pi
-        cosine = (x * x + planar_z ** 2 - self.upper ** 2 - self.lower ** 2) / (2 * self.upper * self.lower)
-        if np.any(np.abs(cosine) > 1.0 + 1e-9):
-            raise ValueError("Init 足端目标超出连杆长度允许的可达空间")
-        knee = -np.arccos(np.clip(cosine, -1, 1))
-        pitch = np.arctan2(-x, -planar_z) - np.arctan2(self.lower * np.sin(knee),
-                                                    self.upper + self.lower * np.cos(knee))
-        result = np.empty(12)
-        result[self.indices] = np.column_stack((roll, pitch, knee))
-        if np.any(result < self.limits[:, 0] - 1e-7) or np.any(result > self.limits[:, 1] + 1e-7):
-            raise ValueError("Init IK 目标超过关节限位")
-        return result
 
 
-class FootTrajectoryInit:
-    """以物理步频率求轨迹；每次进入 INIT 捕获实际姿态并重新计时。"""
-
-    label = "foot trajectory + PD (quintic)"
-    behavior_name = "init_pd"
+class FootTrajectoryInit(FootTrajectory):
+    """MuJoCo 反馈适配；轨迹实现与实机完全共用。"""
 
     def __init__(self, robot: BpxMujocoRobot):
         self.robot = robot
-        self.config = robot.config.init_controller
-        self.kinematics = LegKinematics(robot)
-        self.progress = 0.0
-        self.started_at: float | None = None
-        self.last_time = 0.0
-        self.phase = "idle"
+        super().__init__(robot.config.init_controller, LegKinematics(robot))
         self.target = robot.default_joint_position.copy()
-        self.support_feet = np.column_stack((np.zeros(4), self.kinematics.offsets,
-                                            np.full(4, -self.config.support_depth)))
-        self.final_feet = self.support_feet.copy()
-        self.final_feet[:, 2] = -self.config.standing_depth
-        self.final_target = self.kinematics.inverse(self.final_feet)
-        # Validate every nominal support/lift sample, including limits, before simulation.
-        for s in np.linspace(0, 1, 101):
-            self.kinematics.inverse(self.support_feet + s * (self.final_feet - self.support_feet))
 
-    def start(self) -> None:
-        self.target = self.robot.joint_position().copy()
-        self.start_feet = self.kinematics.forward(self.target)
-        for s in np.linspace(0, 1, 101):
-            self.kinematics.inverse(self.start_feet + s * (self.support_feet - self.start_feet))
-        self.started_at = self.last_time = float(self.robot.data.time)
-        self.progress = 0.0
-        self.phase = "support"
+    def start(self):
+        super().start(float(self.robot.data.time), self.robot.joint_position())
 
     @property
-    def complete(self) -> bool:
-        return self.progress >= self.config.duration and np.max(np.abs(self.target - self.final_target)) < 1e-5
+    def timed_out(self):
+        return super().timed_out(float(self.robot.data.time))
 
-    @property
-    def timed_out(self) -> bool:
-        return self.started_at is not None and self.robot.data.time - self.started_at >= self.config.timeout
-
-    def __call__(self, observation: np.ndarray | None = None) -> np.ndarray:
-        del observation
-        if self.started_at is None:
-            raise RuntimeError("必须先 start() 再执行 Init")
-        now = float(self.robot.data.time)
-        dt = max(0.0, now - self.last_time)
-        self.last_time = now
-        error = float(np.max(np.abs(self.target - self.robot.joint_position())))
-        supported = self.robot.feet_in_contact() == 4
-        if error <= self.config.tracking_error_limit:
-            next_progress = min(self.progress + dt, self.config.duration)
-            # At the support waypoint, wait for four feet before lifting further.
-            if not supported and next_progress > self.config.support_duration:
-                next_progress = max(self.progress, self.config.support_duration)
-            self.progress = next_progress
-        if self.progress <= self.config.support_duration:
-            alpha = quintic(self.progress / self.config.support_duration)
-            feet = self.start_feet + alpha * (self.support_feet - self.start_feet)
-            self.phase = "support"
-        else:
-            alpha = quintic((self.progress - self.config.support_duration)
-                            / (self.config.duration - self.config.support_duration))
-            feet = self.support_feet + alpha * (self.final_feet - self.support_feet)
-            self.phase = "lift"
-        desired = self.kinematics.inverse(feet)
-        self.target += np.clip(desired - self.target, -self.config.joint_speed_limit * dt,
-                               self.config.joint_speed_limit * dt)
-        if self.complete:
-            self.phase = "settle"
-        elif error > self.config.tracking_error_limit or (self.progress >= self.config.support_duration and not supported):
-            self.phase = "paused"
-        return ((self.target - self.robot.default_joint_position) / self.robot.config.control.action_scale).astype(np.float32)
+    def __call__(self, observation=None):
+        target = self.step(float(self.robot.data.time), self.robot.joint_position(),
+                           self.robot.feet_in_contact() == 4)
+        return ((target - self.robot.default_joint_position) / self.robot.config.control.action_scale).astype(np.float32)

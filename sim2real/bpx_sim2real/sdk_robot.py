@@ -127,6 +127,9 @@ class SDKSource:
             )
         odom_token, (odom,) = self._group(r.getOdometryTimestamp, [r.getLegOdom])
         velocity = odom.get("velocity_body") if odom else None
+        odom_position = odom.get("position") if odom else None
+        if odom_position is not None:
+            odom_position = vector(odom_position, 3, "SDK odometry position").tolist()
         arrays = [(q, 12), (dq, 12), (torque, 12), (quat, 4), (omega, 3), (acc, 3), (velocity, 3)]
         q, dq, torque, quat, omega, acc, velocity = [
             vector(value, width, "SDK feedback").tolist() if value is not None else None for value, width in arrays
@@ -174,6 +177,7 @@ class SDKSource:
             odom_age,
             telemetry,
             dict(self.identity),
+            odom_position=odom_position,
         )
 
     def send(self, kp, position, kd, velocity, feedforward):

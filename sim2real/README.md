@@ -126,7 +126,7 @@ python sim2real/visualize.py --gamepad-device /dev/input/eventN
 
 `—` 表示没有有效显示值，不表示 0。joint/IMU 年龄表示主机观察到更新标记变化后经过的时间，不是端到端网络延迟。反馈缺失、过期或会话结束时，策略预览暂停并重建历史；旧反馈和历史曲线可能仍保留在屏幕上。
 
-窗口根据有效的机器人运动状态和电脑手柄输入自动选择 Stand/Walk/STOPPING，与部署控制器共用切换阈值、延时和 command 变化率限制；只推理选中模型。Stand command 恒为零，松开摇杆后经过 STOPPING 再回 Stand。趴卧、起身、阻尼、其他步态、倾角超限或手柄不可读时暂停策略预览。
+窗口根据有效的机器人运动状态和电脑手柄输入自动选择 Stand/Walk/STOPPING，使用同样的切换阈值、延时和 command 变化率限制；窗口不具备实机部署的起身、接地估计或速度稳定验收，只推理选中模型。Stand command 恒为零，松开摇杆后经过 STOPPING 再回 Stand。趴卧、起身、阻尼、其他步态、倾角超限或手柄不可读时暂停策略预览。
 
 顶部显示自动选择的策略、固件状态/步态/控制来源，以及只读的实时 vx/vy/wz；不提供手动策略切换、速度输入框或应用按钮。这里的“当前策略”是只读状态机选择，不代表 SDK 已确认固件执行本机 ONNX 权重。手柄输入和策略目标均未发送。模型加载失败不阻止读取反馈。
 
@@ -212,7 +212,18 @@ python sim2real/run.py --config sim2real/config/local.runtime.toml analyze \
 python sim2real/run.py --config sim2real/config/local.runtime.toml run
 ```
 
-实际运动需显式 `--live --arm`、`allow_motion=true`、输出日志和已确认参数，完整条件见 [操作手册](OPERATION_GUIDE.md)。当前实机入口从已验证站姿接管，没有自动起身功能；运行到期或 Ctrl+C 的清零退出可能释放支撑力，需要先验证退出行为。
+实际运动需显式 `--live --arm`、`allow_motion=true`、输出日志和已确认参数，完整条件见 [操作手册](OPERATION_GUIDE.md)。实机入口默认使用电脑手柄：保持实测趴姿等待 RB，执行足端五次轨迹 + IK + PD 起身，
+连续稳定后交给 Stand；摇杆进入 Walk，松杆经过 STOPPING 回 Stand。
+状态机和起身轨迹与 sim2sim 共用。实机采用已验证的里程计高度和力矩/运动学接地估计，
+仅支持 BPX 水平地面起身；新增确认项默认关闭，详见操作手册。
+
+```bash
+python sim2real/run.py --config sim2real/config/local.runtime.toml run \
+  --live --arm --output "outputs/sim2real/live-$(date +%Y%m%d-%H%M%S).jsonl"
+```
+
+省略 `--duration` 持续运行；RB 起身、摇杆速度、可选 LB 使能与 sim2sim 一致。
+运行到期、Ctrl+C 或故障退出会尝试清零，不先减速停车，可能释放支撑力。
 
 CLI 保留 `check`、`monitor`、`inspect`、`analyze`、`replay` 和 `run`。原有 `compare-startup`、`calibrate`、`jog` 及对应必做流程已移除。
 
