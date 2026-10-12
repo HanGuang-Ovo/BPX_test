@@ -68,6 +68,7 @@ datasets
 tests/
 !/sim2real/tests/
 !/sim2real/tests/**
+/sim2real/tests/__pycache__/
 
 # Docker history
 .isaac-lab-docker-history

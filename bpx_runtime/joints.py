@@ -1,4 +1,4 @@
-"""训练关节顺序与官方 SDK 顺序；方向和零位另行实物标定。"""
+"""训练关节顺序与官方 SDK 顺序；默认沿用 SDK 坐标；实机接入时核对与训练模型一致。"""
 
 LEGS = ("fl", "fr", "hl", "hr")
 JOINT_TYPES = ("hip_roll", "hip_pitch", "knee")

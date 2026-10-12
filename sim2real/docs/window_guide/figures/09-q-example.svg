@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1600" height="745" viewBox="0 0 1600 745">
+<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10" fill="#7dd3c7"/></marker></defs>
+<rect width="1600" height="745" fill="#0d1622"/>
+<g font-family="Noto Sans CJK SC, sans-serif" fill="#e8eef6">
+<text x="48" y="61" font-size="38" font-weight="700">图 9｜三个 q 的排错算例</text>
+<text x="48" y="100" font-size="23" fill="#a4b7cc">假设 FR Roll 官方 SDK 通道为 3：通道 3 = 0.1 rad，通道 4 = 0.8 rad。</text>
+<text x="55" y="169" font-size="29" fill="#a4b7cc" font-weight="700">场景</text>
+<text x="530" y="169" font-size="29" fill="#a4b7cc" font-weight="700">SDK q</text>
+<text x="755" y="169" font-size="29" fill="#a4b7cc" font-weight="700">官方 q</text>
+<text x="980" y="169" font-size="29" fill="#a4b7cc" font-weight="700">当前 q</text>
+<text x="1200" y="169" font-size="29" fill="#a4b7cc" font-weight="700">说明</text>
+<rect x="40" y="192" width="1520" height="88" rx="10" fill="#19283a"/>
+<text x="55" y="230" font-size="28" fill="#e8eef6" font-weight="400">正确索引，sign=+1</text>
+<text x="530" y="230" font-size="28" fill="#e8eef6" font-weight="400">0.1</text>
+<text x="755" y="230" font-size="28" fill="#e8eef6" font-weight="400">0.1</text>
+<text x="980" y="230" font-size="28" fill="#e8eef6" font-weight="400">0.1</text>
+<text x="1200" y="230" font-size="28" fill="#e8eef6" font-weight="400">没有额外修正</text>
+<rect x="40" y="304" width="1520" height="88" rx="10" fill="#19283a"/>
+<text x="55" y="342" font-size="28" fill="#f9c578" font-weight="400">错选通道 4 的假想场景</text>
+<text x="530" y="342" font-size="28" fill="#f9c578" font-weight="400">0.8</text>
+<text x="755" y="342" font-size="28" fill="#f9c578" font-weight="400">0.1</text>
+<text x="980" y="342" font-size="28" fill="#f9c578" font-weight="400">0.8</text>
+<text x="1200" y="342" font-size="28" fill="#f9c578" font-weight="400">通道对应不一致</text>
+<rect x="40" y="416" width="1520" height="88" rx="10" fill="#19283a"/>
+<text x="55" y="454" font-size="28" fill="#f9c578" font-weight="400">正确索引，sign=-1</text>
+<text x="530" y="454" font-size="28" fill="#f9c578" font-weight="400">0.1</text>
+<text x="755" y="454" font-size="28" fill="#f9c578" font-weight="400">0.1</text>
+<text x="980" y="454" font-size="28" fill="#f9c578" font-weight="400">−0.1</text>
+<text x="1200" y="454" font-size="28" fill="#f9c578" font-weight="400">方向转换改变值</text>
+<text x="55" y="613" font-size="25" fill="#65d9c7" font-weight="400">SDK q：按配置选通道；官方 q：按官方定义选通道；当前 q：再做 sign / offset 转换。</text>
+<text x="55" y="678" font-size="25" fill="#a4b7cc" font-weight="400">实际配置必须保持 0～11 索引一一映射；此图是概念算例，不是修改建议。</text>
+</g></svg>

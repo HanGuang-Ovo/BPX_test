@@ -1,6 +1,6 @@
-"""TOML 配置与分阶段就绪检查；未测量值保持未确认状态。"""
+"""官方 SDK 坐标默认值、可选覆盖与实机运动就绪检查。"""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 import math
 import tomllib
@@ -8,6 +8,9 @@ import tomllib
 import numpy as np
 
 from bpx_runtime.joints import POLICY_JOINT_NAMES, SDK_JOINT_NAMES, DEFAULT_JOINT_POSITION
+
+# 官方 BPX/bpx/urdf/bpx.urdf 的模型范围；不代表固件限矩或机械验收。
+OFFICIAL_JOINT_LIMITS = ((-.8727, .8727),) * 4 + ((-.7854, 2.60661),) * 4 + ((-2.7531, -.5539),) * 4
 
 
 def vector(value, size, name, *, positive=False):
@@ -34,10 +37,6 @@ class JointCalibration:
     offset: float
     minimum: float | None
     maximum: float | None
-    mapping_verified: bool
-    direction_verified: bool
-    offset_verified: bool
-    limits_verified: bool
 
 
 @dataclass(frozen=True)
@@ -79,8 +78,12 @@ class Config:
     def model_path(self, mode):
         return self.resolve(self.policy[f"{mode}_model"])
 
-    def blockers(self, stage="deploy", joint_name=None):
-        """stage=observe 无需标定；replay 可用模板，结果只用于调试。"""
+    @property
+    def alignment_verified(self):
+        return self.calibration.get("alignment", {}).get("verified", False)
+
+    def blockers(self, stage="deploy"):
+        """读取和预览无需确认；运动前整体核对 SDK 与训练模型。"""
         if stage in ("observe", "replay"):
             return []
         reasons = []
@@ -104,43 +107,23 @@ class Config:
             reasons.append("firmware.robot_torque_limit_nm 未填写")
         if self.safety.get("allow_motion") is not True:
             reasons.append("safety.allow_motion=false")
-        if stage == "jog":
-            jog = self.runtime["jog"]
-            if jog.get("supported_robot_confirmed") is not True:
-                reasons.append("jog.supported_robot_confirmed 未确认（其他关节无保持力矩）")
-            for key in ("kp", "kd", "max_delta_rad", "target_speed_rad_s", "duration_s",
-                        "feedback_speed_rad_s", "tracking_error_rad"):
-                if not math.isfinite(jog[key]) or jog[key] <= 0:
-                    reasons.append(f"jog.{key} 未设为实测正数")
-            chosen = [j for j in self.joints if j.name == joint_name]
-            if len(chosen) != 1:
-                reasons.append("必须指定有效的模型关节名称")
-            for j in chosen:
-                for key in ("mapping_verified", "direction_verified", "offset_verified", "limits_verified"):
-                    if not getattr(j, key):
-                        reasons.append(f"{j.name}.{key} 未确认；先做被动标定")
-        else:
-            for j in self.joints:
-                for key in ("mapping_verified", "direction_verified", "offset_verified", "limits_verified"):
-                    if not getattr(j, key):
-                        reasons.append(f"{j.name}.{key} 未确认")
-            if not self.calibration["imu"].get("verified", False):
-                reasons.append("calibration.imu.verified=false")
-            if self.policy["include_base_lin_vel"] and self.calibration["odometry"].get("verified") is not True:
-                reasons.append("48 维 Actor 所需 calibration.odometry.verified=false")
-            if not self.control.get("gains_verified", False):
-                reasons.append("control.gains_verified=false")
-            if not self.control.get("standing_handover_verified", False):
-                reasons.append("control.standing_handover_verified=false")
-            for mode in ("walk", "stand"):
-                if not self.model_path(mode).is_file():
-                    reasons.append(f"policy.{mode}_model 不存在")
-            for key in ("target_speed_rad_s", "joint_speed_rad_s", "tracking_error_rad", "takeover_position_error_rad"):
-                if not self.safety.get(key):
-                    reasons.append(f"safety.{key} 未填写")
+        if not self.alignment_verified:
+            reasons.append("alignment.verified=false；请在只读窗口核对关节与 IMU 坐标")
+        if self.policy["include_base_lin_vel"] and self.calibration["odometry"].get("verified") is not True:
+            reasons.append("48 维 Actor 所需 calibration.odometry.verified=false")
+        if not self.control.get("gains_verified", False):
+            reasons.append("control.gains_verified=false")
+        if not self.control.get("standing_handover_verified", False):
+            reasons.append("control.standing_handover_verified=false")
+        for mode in ("walk", "stand"):
+            if not self.model_path(mode).is_file():
+                reasons.append(f"policy.{mode}_model 不存在")
+        for key in ("target_speed_rad_s", "joint_speed_rad_s", "tracking_error_rad", "takeover_position_error_rad"):
+            if not self.safety.get(key):
+                reasons.append(f"safety.{key} 未填写")
         for j in self.joints:
-            if j.limits_verified and (j.minimum is None or j.maximum is None):
-                reasons.append(f"{j.name} 确认限位但缺少 minimum/maximum")
+            if j.minimum is None or j.maximum is None:
+                reasons.append(f"{j.name} 缺少 minimum/maximum")
         return reasons
 
 
@@ -153,6 +136,13 @@ def load_config(path):
         calibration_path = path.parent / calibration_path
     with calibration_path.open("rb") as stream:
         calibration = tomllib.load(stream)
+    calibration.setdefault("identity", {"serial_number": "", "robot_model": "", "firmware_version": ""})
+    calibration.setdefault("alignment", {"verified": False})
+    calibration.setdefault("imu", {})
+    for key, value in {"sensor_to_body": [1,0,0,0,1,0,0,0,1], "gyro_bias": [0,0,0],
+                       "quaternion_frame": "body_to_world"}.items():
+        calibration["imu"].setdefault(key, value)
+    calibration.setdefault("odometry", {"verified": False})
     net = raw["network"]
     if not isinstance(net["robot_ip"], str) or not net["robot_ip"]:
         raise ValueError("network.robot_ip 不能为空")
@@ -203,30 +193,27 @@ def load_config(path):
             vector(safety[key], 12, key, positive=True)
     fw = raw["firmware"]
     booleans = [(safety, "allow_motion"), (control, "gains_verified"),
-                (control, "standing_handover_verified"), (calibration["imu"], "verified"),
-                (calibration["odometry"], "verified"), (raw["jog"], "supported_robot_confirmed")]
+                (control, "standing_handover_verified"), (calibration["alignment"], "verified"),
+                (calibration["odometry"], "verified")]
     booleans += [(fw, k) for k in ("joint_control_verified", "watchdog_verified", "shutdown_verified",
                                   "gain_units_verified", "robot_limits_verified")]
     if any(not isinstance(section[key], bool) for section, key in booleans):
         raise ValueError("所有 verified/allow_motion/confirmed 字段必须为 bool")
-    for key, value in raw["jog"].items():
-        if key == "supported_robot_confirmed":
-            continue
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
-            raise ValueError(f"jog.{key} 必须为非负有限数；0 表示未测量")
     if not isinstance(fw["watchdog_timeout_s"], (int, float)) or not math.isfinite(fw["watchdog_timeout_s"]) or fw["watchdog_timeout_s"] < 0:
         raise ValueError("watchdog_timeout_s 必须为非负有限数")
     if fw["robot_torque_limit_nm"]:
         vector(fw["robot_torque_limit_nm"], 12, "robot_torque_limit_nm", positive=True)
     joints = []
-    entries = calibration["joints"]
-    if len(entries) != 12:
-        raise ValueError("标定必须包含 12 个关节")
-    for name in POLICY_JOINT_NAMES:
+    entries = calibration.get("joints", [])
+    if any(j.get("name") not in POLICY_JOINT_NAMES for j in entries):
+        raise ValueError("关节覆盖项包含未知名称")
+    for i, name in enumerate(POLICY_JOINT_NAMES):
         matches = [j for j in entries if j["name"] == name]
-        if len(matches) != 1:
-            raise ValueError(f"标定缺少或重复关节 {name}")
-        item = matches[0]
+        if len(matches) > 1:
+            raise ValueError(f"重复关节 {name}")
+        lo, hi = OFFICIAL_JOINT_LIMITS[i]
+        item = {"sdk_index": SDK_JOINT_NAMES.index(name), "sign": 1, "offset": 0.,
+                "minimum": lo, "maximum": hi, **(matches[0] if matches else {})}
         index = item["sdk_index"]
         if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < 12:
             raise ValueError("sdk_index 要求 0..11")
@@ -238,10 +225,7 @@ def load_config(path):
             raise ValueError("关节标定值必须有限")
         if (lo is None) != (hi is None) or (lo is not None and lo >= hi):
             raise ValueError("minimum/maximum 必须同时填写且 minimum < maximum")
-        flags = [item.get(k, False) for k in ("mapping_verified", "direction_verified", "offset_verified", "limits_verified")]
-        if any(not isinstance(v, bool) for v in flags):
-            raise ValueError("标定确认字段必须为 bool")
-        joints.append(JointCalibration(name, index, item["sign"], offset, lo, hi, *flags))
+        joints.append(JointCalibration(name, index, item["sign"], offset, lo, hi))
     if sorted(j.sdk_index for j in joints) != list(range(12)):
         raise ValueError("SDK 索引必须为 0..11 的一一映射")
     imu = calibration["imu"]
@@ -251,4 +235,6 @@ def load_config(path):
     vector(imu["gyro_bias"], 3, "imu.gyro_bias")
     if imu["quaternion_frame"] not in ("sensor_to_world", "body_to_world"):
         raise ValueError("imu.quaternion_frame 要求 sensor_to_world/body_to_world")
+    # 录制快照保存解析后的全部默认/覆盖项，避免重放依赖未来版本默认值。
+    calibration["joints"] = [asdict(joint) for joint in joints]
     return Config(path, calibration_path.resolve(), raw, calibration, tuple(joints))

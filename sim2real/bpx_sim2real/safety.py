@@ -7,8 +7,8 @@ import numpy as np
 from .config import vector
 
 
-def require_ready(config, stage, joint_name=None):
-    reasons = config.blockers(stage, joint_name)
+def require_ready(config, stage):
+    reasons = config.blockers(stage)
     if reasons:
         raise RuntimeError("当前阶段尚未就绪：\n  - " + "\n  - ".join(reasons))
 

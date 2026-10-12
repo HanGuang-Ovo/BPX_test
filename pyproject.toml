@@ -14,6 +14,7 @@ inference = ["onnxruntime>=1.16"]
 
 [project.scripts]
 bpx-real = "bpx_sim2real.cli:main"
+bpx-monitor = "bpx_sim2real.monitor:main"
 
 [tool.setuptools]
 packages = ["bpx_runtime", "bpx_sim2real"]

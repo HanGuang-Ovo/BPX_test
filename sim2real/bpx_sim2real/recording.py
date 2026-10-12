@@ -30,8 +30,9 @@ class JsonlWriter(AbstractContextManager):
         if self.stream:
             try:
                 exc = args[1] if len(args) > 1 else None
-                self.write({"type": "end", "status": "error" if exc else "completed",
-                            "error": str(exc) if exc else None})
+                self.write(
+                    {"type": "end", "status": "error" if exc else "completed", "error": str(exc) if exc else None}
+                )
             finally:
                 self.stream.close()
 
@@ -66,16 +67,25 @@ def resample(samples, period):
         while index + 1 < len(samples) and samples[index + 1].host_time <= now + 1e-9:
             index += 1
         sample = samples[index]
-        hold = max(0., now - sample.host_time)
-        ages = {name: None if getattr(sample, name) is None else getattr(sample, name) + hold
-                for name in ("joint_age_s", "imu_age_s", "odom_age_s")}
-        yield replace(sample, host_time=now, **ages)
+        hold = max(0.0, now - sample.host_time)
+        ages = {
+            name: None if getattr(sample, name) is None else getattr(sample, name) + hold
+            for name in ("joint_age_s", "imu_age_s", "odom_age_s")
+        }
+        telemetry = dict(sample.telemetry)
+        if telemetry.get("motion_age_s") is not None:
+            telemetry["motion_age_s"] += hold
+        yield replace(sample, host_time=now, telemetry=telemetry, **ages)
 
 
 def summarize(samples):
     duration = samples[-1].host_time - samples[0].host_time
-    report = {"samples": len(samples), "duration_s": duration,
-              "disconnected_samples": sum(not s.connected for s in samples), "groups": {}}
+    report = {
+        "samples": len(samples),
+        "duration_s": duration,
+        "disconnected_samples": sum(not s.connected for s in samples),
+        "groups": {},
+    }
     for group in ("joint", "imu", "odom"):
         previous = None
         changes = 0

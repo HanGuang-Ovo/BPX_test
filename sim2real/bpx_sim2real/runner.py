@@ -4,7 +4,6 @@ import time
 
 import numpy as np
 
-from .calibration import Calibration
 from .controller import ActorController
 from .recording import JsonlWriter, load_samples, resample
 from .safety import StateGuard, TargetGuard, require_ready
@@ -96,7 +95,7 @@ def run_live(config, output_path, command, duration, *, armed=False, policies=No
             sample = wait_for_feedback(source, guard, config.network["connect_timeout_s"], clock=clock, sleep=sleep)
             q = cal.position_from_sdk(sample.q)
             if np.any(np.abs(q-cal.default) > np.asarray(config.safety["takeover_position_error_rad"])):
-                raise RuntimeError("实测姿态不符合已标定站立接管范围；本入口不自动起身")
+                raise RuntimeError("实测姿态不符合已确认站立接管范围；本入口不自动起身")
             target_guard = TargetGuard(config, q)
             start = clock()
             send_index = policy_index = 0
@@ -137,72 +136,3 @@ def run_live(config, output_path, command, duration, *, armed=False, policies=No
                            "sample": sample.to_dict(), "policy": result if policy_index else None})
                 send_index += 1
     return policy_index
-
-
-def jog(config, joint_name, delta, output_path, *, live=False, armed=False, source_factory=SDKSource,
-        clock=time.monotonic, sleep=time.sleep):
-    joint = next((j for j in config.joints if j.name == joint_name), None)
-    if joint is None or not np.isfinite(delta) or delta == 0:
-        raise ValueError("指定有效关节名与非零有限 delta（模型关节角，rad）")
-    if not live:
-        return {"mode": "plan", "joint": joint_name, "sdk_index": joint.sdk_index,
-                "delta_model_rad": delta, "delta_sdk_rad": joint.sign*delta,
-                "blockers": config.blockers("jog", joint_name)}
-    require_ready(config, "jog", joint_name)
-    if not armed:
-        raise RuntimeError("实机点动需要 --live --arm")
-    settings = config.runtime["jog"]
-    if abs(delta) > settings["max_delta_rad"]:
-        raise ValueError("点动幅度超出已设置上限")
-    if settings["duration_s"] < 2 * abs(delta)/settings["target_speed_rad_s"]:
-        raise ValueError("点动时长不足以完成往返")
-    cal = Calibration(config)
-    index = joint.sdk_index
-    kp, kd = np.zeros(12), np.zeros(12)
-    kp[index], kd[index] = settings["kp"], settings["kd"]
-    guard = StateGuard(config)
-    period = 1./config.control["send_rate_hz"]
-    torque_limit = config.firmware["robot_torque_limit_nm"][config.policy["joint_names"].index(joint_name)]
-    with JsonlWriter(output_path, {"mode": "jog", "joint": joint_name, "delta_model_rad": delta}) as log:
-        with source_factory(config, joint_control=True) as source:
-            sample = wait_for_feedback(source, guard, config.network["connect_timeout_s"], require_imu=False,
-                                       clock=clock, sleep=sleep)
-            initial = np.asarray(sample.q)
-            target = initial.copy()
-            model_initial = cal.position_from_sdk(initial)[config.policy["joint_names"].index(joint_name)]
-            model_end = model_initial + delta
-            if min(model_initial, model_end) < joint.minimum or max(model_initial, model_end) > joint.maximum:
-                raise RuntimeError("点动端点超出工作限位")
-            start = clock()
-            tick = 0
-            while True:
-                deadline = start + tick*period
-                remaining = deadline-clock()
-                if remaining > 0:
-                    sleep(remaining)
-                now = clock()
-                elapsed = now-start
-                if elapsed + 1e-9 >= settings["duration_s"]:
-                    break
-                if now-deadline > min(config.period, config.safety["max_cycle_lateness_s"]):
-                    raise RuntimeError("点动发送循环超期")
-                sample = source.read()
-                guard.check(sample, clock(), require_imu=False, hardware=True)
-                if abs(sample.dq[index]) > settings["feedback_speed_rad_s"]:
-                    raise RuntimeError("点动实际速度超限")
-                if abs(target[index]-sample.q[index]) > settings["tracking_error_rad"]:
-                    raise RuntimeError("点动跟踪误差超限")
-                model_q = cal.position_from_sdk(sample.q)[config.policy["joint_names"].index(joint_name)]
-                if not joint.minimum <= model_q <= joint.maximum:
-                    raise RuntimeError("点动实际位置超出工作限位")
-                # 前半段到达目标，后半段回到实测起点；其余关节 kp/kd 均为零。
-                desired = initial[index] + joint.sign*delta if elapsed < settings["duration_s"]/2 else initial[index]
-                target[index] += np.clip(desired-target[index], -settings["target_speed_rad_s"]*period,
-                                         settings["target_speed_rad_s"]*period)
-                tau = kp[index]*(target[index]-sample.q[index])-kd[index]*sample.dq[index]
-                if abs(tau) > torque_limit:
-                    raise RuntimeError("点动估算力矩超限")
-                source.send(kp, target, kd, np.zeros(12), np.zeros(12))
-                log.write({"type": "command", "target_sdk": target.tolist(), "sample": sample.to_dict()})
-                tick += 1
-    return {"mode": "completed", "commands": tick}

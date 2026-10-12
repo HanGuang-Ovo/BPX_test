@@ -1,8 +1,16 @@
-# BPX 四足机器人多策略训练与跨仿真验证（PD_Init）
+# BPX 四足机器人：多策略训练、跨仿真验证与实机对齐
 
-实机检测、标定和部署框架见 [sim2real 使用说明](sim2real/README.md)。
-当前阶段先执行只读检测与被动标定，实机运动入口默认关闭；
-仿真与实机共用的策略推理、历史观测和动作混合位于 `bpx_runtime/`。
+项目覆盖 Isaac Lab 训练、MuJoCo 跨仿真验证（sim2sim）和基于官方 SDK 的实机接入（sim2real）。实机阶段先通过只读窗口核对关节反馈、Stand/Walk 策略输出与四元数姿态，运动入口默认关闭。
+
+| 当前要做的事 | 文档入口 |
+| --- | --- |
+| 开始实机接入，安装依赖和配置窗口 | [sim2real 使用说明](sim2real/README.md) |
+| 看懂窗口、三个 q、姿态和策略输出，排查问题 | [窗口图解使用与问题分析](sim2real/WINDOW_GUIDE.md) |
+| 按步骤完成网络、初始化、录制与部署准备 | [sim2real 操作手册](sim2real/OPERATION_GUIDE.md) |
+| 检查硬件接入条件 | [硬件接入说明](sim2real/HARDWARE_SETUP.md) |
+| 在 MuJoCo 中验证多策略与 PD 起身 | [sim2sim 使用说明](sim2sim/README.md) |
+
+仿真与实机共用的策略推理、历史观测和动作混合位于 `bpx_runtime/`。只读窗口使用官方关节与 IMU 默认坐标，不要求先逐关节手工测量零位、offset 和方向；发现实际不一致时再核对并添加坐标覆盖。
 
 本项目基于 Isaac Lab 的管理器式强化学习环境，使用 RSL-RL 的 PPO 算法分别训练 BPX 四足机器人的行走、静止站立和趴卧起身策略，并将导出的策略部署到 MuJoCo，验证不同物理引擎中的控制表现（sim2sim）。项目现有环境说明以 Isaac Lab 2.2.1 为基线。
 
@@ -62,6 +70,16 @@ BPX_test/
 │   ├── run_mujoco.py               # 跨仿真运行入口
 │   ├── validate_setup.py           # 模型、关节映射与 PD 检查
 │   └── validate_policy_export.py   # ONNX / TorchScript 输出对比
+├── bpx_runtime/                    # 仿真与实机共用的策略、关节和历史观测
+├── sim2real/
+│   ├── visualize.py                # 只读反馈、策略预览和姿态窗口
+│   ├── run.py                      # 检查、采集、分析、回放和部署入口
+│   ├── bpx_sim2real/               # SDK 适配、坐标转换、窗口和控制保护
+│   ├── config/                     # 模板及本机 runtime / 坐标配置
+│   ├── docs/window_guide/          # 窗口截图、标注图与 SVG 示意图
+│   ├── WINDOW_GUIDE.md             # 图解阅读与问题分析
+│   ├── OPERATION_GUIDE.md          # 实机操作流程
+│   └── HARDWARE_SETUP.md           # 硬件接入条件
 ├── logs/rsl_rl/                    # 训练生成的检查点、参数与导出模型
 └── outputs/                        # 运行生成的输出
 ```
@@ -102,6 +120,24 @@ python sim2sim/validate_setup.py
 ```
 
 依赖包括 NumPy、MuJoCo 和 ONNX Runtime。仅使用 ONNX 推理无需安装 PyTorch；使用 TorchScript 或导出一致性检查时，还需要在该环境中安装 `torch`。
+
+### 实机只读窗口
+
+按 [sim2real 使用说明](sim2real/README.md) 准备 Python 3.11+、官方 SDK、ONNX Runtime 和本机配置后，在项目根目录执行：
+
+```bash
+conda activate bpx-real
+python sim2real/visualize.py
+
+# 不连接机器人，使用模拟反馈熟悉界面
+python sim2real/visualize.py --demo
+```
+
+窗口优先使用 `sim2real/config/local.runtime.toml`，不存在时使用模板。插好网线并按厂商流程上电和初始化后，填写机器人 IP，点击“连接只读反馈”。Wi-Fi 可继续用于上网，路由配置见 [操作手册](sim2real/OPERATION_GUIDE.md)。
+
+窗口显示 12 个关节的反馈和预览目标、自动选中策略的原始 action、姿态骨架与参数对照，默认字号 32，可调到 48。电脑 USB/蓝牙手柄输入以只读方式显示，与部署共用的状态机自动选择 Stand/Walk/STOPPING，不提供手动策略或速度输入。预览目标不发送给机器人，“目标−反馈”不是闭环跟踪误差。标注截图和完整分析方法见 [窗口图解手册](sim2real/WINDOW_GUIDE.md)；DEMO 使用模拟反馈，不能证明实机已对齐。
+
+DEMO 中青色骨架来自程序生成的反馈：关节只在默认站姿附近摆动约 ±2°，机身缓慢旋转，绘图位置固定。橙色骨架表示模型目标，目标不会驱动青色反馈，因此 Walk 预览不会显示实际迈腿行走。可观察“当前 q”和 RPY 数值确认刷新；详细说明见 [sim2real README](sim2real/README.md#demo-中青色骨架为什么看起来不动)。验证策略执行后的步态请使用 [MuJoCo sim2sim](sim2sim/README.md)。
 
 ## 训练、回放与导出
 
@@ -379,6 +415,7 @@ python sim2sim/validate_policy_export.py --samples 100
 | MuJoCo 找不到策略文件 | 更新 TOML 的 `[paths]`，检查是否已通过 `play.py` 导出模型 |
 | 趴姿一直等待、不起身 | 确认已启用 Supervisor；手柄流程按 RB，无手柄加 `--auto-init`；只有 RL Init 模式需要检查起身模型 |
 | ONNX / TorchScript 对比失败 | 先确认两份导出来自同一检查点；默认配置可能指向不同实验 |
+| 实机窗口无反馈、策略列为空或姿态方向不对 | 按 [窗口图解手册](sim2real/WINDOW_GUIDE.md) 检查连接、反馈新鲜度、模型和坐标转换 |
 | 编辑器无法解析 Isaac Sim 模块 | 在 VS Code 中运行 `setup_python_env` 任务，按提示填写 Isaac Sim 安装路径 |
 
 ## 开发与参考文档
@@ -397,6 +434,10 @@ pre-commit run --all-files
 - [崎岖站立课程与历史观测训练](ROUGH_STAND_TRAINING.md)
 - [训练—导出—MuJoCo 工作流](sim2sim/BPX_SIM2SIM_WORKFLOW.md)
 - [MuJoCo 运行器与手柄使用说明](sim2sim/README.md)
+- [sim2real 使用说明](sim2real/README.md)
+- [实机窗口图解与问题分析](sim2real/WINDOW_GUIDE.md)
+- [实机操作手册](sim2real/OPERATION_GUIDE.md)
+- [硬件接入说明](sim2real/HARDWARE_SETUP.md)
 - [训练环境配置说明](BPX_ENV_SETUP.md)
 - [强化学习训练曲线说明](RL_TRAINING_CURVES.md)
 - [行走策略改进路线](BPX_IMPROVEMENT_ROADMAP.md)

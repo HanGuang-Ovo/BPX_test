@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1600" height="650" viewBox="0 0 1600 650">
+<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10" fill="#7dd3c7"/></marker></defs>
+<rect width="1600" height="650" fill="#0d1622"/>
+<g font-family="Noto Sans CJK SC, sans-serif" fill="#e8eef6">
+<text x="48" y="61" font-size="38" font-weight="700">图 10｜排查顺序</text>
+<text x="48" y="100" font-size="23" fill="#a4b7cc">只根据已确认的现象缩小问题范围，一次只改变一个相关因素。</text>
+<rect x="50" y="175" width="350" height="170" rx="16" fill="#19283a" stroke="#60a5fa" stroke-width="2"/>
+<text x="72" y="214" font-size="28" fill="#60a5fa" font-weight="700">1 连接 / 新鲜度</text>
+<text x="72" y="254" font-size="23" fill="#e8eef6" font-weight="400">IP、路由、SDK、UDP、</text>
+<text x="72" y="288" font-size="23" fill="#e8eef6" font-weight="400">joint/IMU 年龄</text>
+<path d="M400,260 L435,260" fill="none" stroke="#7dd3c7" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="445" y="175" width="350" height="170" rx="16" fill="#19283a" stroke="#65d9c7" stroke-width="2"/>
+<text x="467" y="214" font-size="28" fill="#65d9c7" font-weight="700">2 反馈 / 姿态</text>
+<text x="467" y="254" font-size="23" fill="#e8eef6" font-weight="400">实际腿与骨架、q/dq、四元</text>
+<text x="467" y="288" font-size="23" fill="#e8eef6" font-weight="400">数、重力方向</text>
+<path d="M795,260 L830,260" fill="none" stroke="#7dd3c7" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="840" y="175" width="350" height="170" rx="16" fill="#19283a" stroke="#c4b5fd" stroke-width="2"/>
+<text x="862" y="214" font-size="28" fill="#c4b5fd" font-weight="700">3 模型 / 契约</text>
+<text x="862" y="254" font-size="23" fill="#e8eef6" font-weight="400">文件、450→12、顺序、默</text>
+<text x="862" y="288" font-size="23" fill="#e8eef6" font-weight="400">认角、scale</text>
+<path d="M1190,260 L1225,260" fill="none" stroke="#7dd3c7" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="1235" y="175" width="350" height="170" rx="16" fill="#19283a" stroke="#f9c578" stroke-width="2"/>
+<text x="1257" y="214" font-size="28" fill="#f9c578" font-weight="700">4 输出 / 证据</text>
+<text x="1257" y="254" font-size="23" fill="#e8eef6" font-weight="400">自动策略、手柄、目标范围、录</text>
+<text x="1257" y="288" font-size="23" fill="#e8eef6" font-weight="400">制</text>
+<text x="55" y="452" font-size="26" fill="#f9c578" font-weight="700">不能从“策略列为空”直接推断模型坏了，也不能从“三个 q 相等”直接推断实机对齐。</text>
+<text x="55" y="512" font-size="26" fill="#e8eef6" font-weight="400">连接异常先查网络；反馈异常先查原始数据；原始正确而转换错误才调整覆盖项。</text>
+<text x="55" y="573" font-size="25" fill="#a4b7cc" font-weight="400">显示合理且回放正常，只能支持进一步验证；不证明真机运动、停止或步态稳定。</text>
+</g></svg>

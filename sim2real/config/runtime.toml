@@ -25,8 +25,8 @@ joint_names = [
 
 [control]
 policy_rate_hz = 50
-# 暂定值，需确认固件要求后填写并确认 joint_control_verified。
-send_rate_hz = 50
+# 官方关节示例约 100 Hz；此处采用同一发送周期，运动前核对固件支持。
+send_rate_hz = 100
 kp = [40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40]
 kd = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
 gains_verified = false
@@ -68,14 +68,6 @@ joint_speed_rad_s = []
 tracking_error_rad = []
 takeover_position_error_rad = []
 
-[jog]
-# 点动时其他关节 kp/kd=0，必须确认本体已由支架/人工装置支撑。
-supported_robot_confirmed = false
-# 测量后填写；不从 SDK 示例复制 100/2 的增益。
-kp = 0.0
-kd = 0.0
-max_delta_rad = 0.0
-target_speed_rad_s = 0.0
-feedback_speed_rad_s = 0.0
-tracking_error_rad = 0.0
-duration_s = 0.0
+[monitor]
+# 高分辨率屏幕使用大字号；窗口右上可调整到 48。
+font_size = 32

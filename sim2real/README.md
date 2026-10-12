@@ -1,238 +1,232 @@
-# BPX sim2real：先检测与标定，再部署
+# BPX sim2real：官方 SDK 反馈与策略对齐
 
-逐步操作与结果解读请看 [操作手册](OPERATION_GUIDE.md)，包含当前步骤 1～4，以及参数确认后的回放、点动与部署流程。
+通过官方 SDK 读取 BPX 状态，在可视化窗口中对照 12 个关节的反馈、Stand/Walk 策略输出和四元数解算姿态。先确认数据和坐标对应关系，再准备实机接管。
 
-采用独立 `sim2real/` 与公共 `bpx_runtime/`。现有训练代码与策略张量契约保留；
-sim2sim 和 sim2real 共用推理后端、历史缓存、动作混合与坐标数学。
+窗口不发送运动或标零命令。默认使用官方关节索引、`sign=1`、`offset=0` 和 IMU 默认坐标；只有发现实际不一致时才添加覆盖，不需要先填写 12 份重复标定参数。
 
-当前默认配置用于检测和离线分析。`check`、`analyze`、`compare-startup`、
-`calibrate`、`replay`、默认 `jog` 和默认 `run` 都不创建 SDK 连接。
-`inspect` 仅创建官方 `RequestRobotState`。SDK 的 `connect()` 可能自动同步机器人时间，
-因此“只读”在这里指不发送运动/关节/标零命令，不表示 SDK 完全不改变机器人系统时间。
+## 文档入口
 
-## 工程结构
+| 文档 | 适合什么时候阅读 |
+| --- | --- |
+| [窗口图解使用与问题分析](WINDOW_GUIDE.md) | 看懂每一列、三个 q、姿态、曲线和参数页，按现象排错 |
+| [操作手册](OPERATION_GUIDE.md) | 逐步安装、联网、初始化、录制、回放和准备实机接管 |
+| [硬件接入说明](HARDWARE_SETUP.md) | 核对厂商初始化、控制接口、固件保护与实机条件 |
 
-```text
-bpx_runtime/                   # 仿真与实机共用，不依赖 MuJoCo/Isaac Lab/SDK
-  joints.py                    # 固定训练关节顺序、SDK 文档顺序
-  math.py                      # 四元数与坐标变换
-  observation.py               # 45/48 维单帧契约
-  policy.py                    # ONNX/TorchScript/测试策略
-  history.py                   # 按项展开、旧到新的历史
-  transition.py                # command 限斜率、action 混合
-sim2real/
-  run.py                       # 统一分阶段入口
-  config/
-    runtime.toml               # 网络、模型、控制周期、保护、固件确认项
-    joint_calibration.template.toml  # SN、IMU、关节标定模板
-  bpx_sim2real/
-    config.py                  # 配置验证、observe/jog/deploy 就绪报告
-    calibration.py             # 索引、符号、零位、IMU 安装方向
-    state.py                   # 原始状态与逐组新鲜度
-    sdk_robot.py               # 普通只读/高频关节控制两个 SDK 模式
-    recording.py               # JSONL、重采样、诊断报告
-    controller.py              # Stand/Walk、450 维历史、接管混合
-    safety.py                  # 身份、新鲜度、限位、限速、跟踪误差
-    runner.py                  # replay/live/jog 生命周期与真实时钟
-    cli.py                     # 检测、标定与部署命令
-  tests/                       # 模拟 SDK 与时钟，全部离线测试
-```
+![窗口阅读区域标注](docs/window_guide/figures/01-overview.png)
 
-sim2sim 中原来的 `policy/history/transition` 保留为兼容导入；其他仿真入口继续使用原路径。
-实机没有沿用依赖真实离地高度与足端接触的 MuJoCo Supervisor/PD Init。
-本框架实机入口从已验证站姿接管，采用 Stand → Walk → Stopping → Stand；
-Stopping 将速度指令平滑归零，经过配置时长切回 Stand。它不声称通过测量接触或线速度确认停车。
-起身、自动恢复、机器人端固件和机载部署权限属于后续硬件适配内容。
+图中反馈来自实际窗口的 **DEMO 模拟数据**，策略预览使用配置中的 ONNX 模型，不是实机测量。图解手册包含完整截图、12 张标注/示意图和八类问题的排查步骤。图片可点击放大；截图使用 24 号字展示全部列，启动默认字号为 32。
 
-## 环境与入口
+## 快速开始
 
-所有示例在项目根目录执行。Python 3.11+；只读工具只需要 NumPy 和 SDK，
-策略回放/部署额外需要 ONNX Runtime。
+以下命令在项目根目录执行。已有 `bpx-real` 环境和本机配置时，跳过创建与安装步骤。
+
+### 1. 准备运行环境
 
 ```bash
-python -m pip install -e .
-# 只有需要策略推理时安装：
+conda create -n bpx-real python=3.11 -y
+conda activate bpx-real
 python -m pip install -e '.[inference]'
-```
-
-SDK 从官方目录安装与你当前 Python/架构匹配的 wheel（须确认与机器人固件兼容）：
-
-```bash
 python -m pip install --no-index --find-links bpx_sdk_open-master/wheelhouse bpx-sdk-open==1.0.9
 ```
 
-也可先安装 NumPy、SDK 后直接使用 `python sim2real/run.py`，不必安装本项目包。
-安装本项目后 `bpx-real` 与 `python sim2real/run.py` 是同一入口。
-从源码运行默认使用 `sim2real/config/runtime.toml`；普通 wheel 安装的默认配置位于
-`sys.prefix/share/bpx-deployment/config/`，应复制到工作目录并修改模型路径。
-模型文件不会随部署工具安装。
+运行环境需要 Python 3.11+、NumPy、官方 SDK 和 Tkinter；策略预览还需要 ONNX Runtime。SDK wheel 必须匹配 Python、系统和架构，并兼容机器人固件。若提示没有 Tkinter，先运行 `python -m tkinter` 检查该环境。
 
-`--config` 放在子命令前。配置中的相对路径均相对于 runtime.toml 所在目录。
-建议复制模板为本机文件并保持模型路径正确：
+### 2. 准备本机配置
 
 ```bash
-cp sim2real/config/runtime.toml sim2real/config/local.runtime.toml
-cp sim2real/config/joint_calibration.template.toml sim2real/config/local.calibration.toml
+cp -n sim2real/config/runtime.toml sim2real/config/local.runtime.toml
+cp -n sim2real/config/joint_calibration.template.toml sim2real/config/local.calibration.toml
+mkdir -p outputs/sim2real
 ```
 
-在 `local.runtime.toml` 将 `calibration_file` 改为 `local.calibration.toml`。
-`local.*.toml` 与 `outputs/` 中原始采集日志被 Git 忽略。
-模板方向 `sign=1`、零位 `offset=0`、IMU 单位旋转矩阵均为未验证占位值。
-未测量工作限位不填写；未测量实机限矩/速度数组保持空数组。
+`cp -n` 不覆盖已有文件。在 `local.runtime.toml` 中设置：
 
-## 当前只执行步骤 1～4
+```toml
+calibration_file = "local.calibration.toml"
+```
 
-### 1. 固件和控制条件
+核对 `[network].robot_ip` 和 `[policy]` 的两份模型路径。配置相对路径相对于 runtime TOML 所在目录解析；模板中的训练导出文件不保证随仓库提供，也不会自动更新为新训练模型。
 
-填写 [HARDWARE_SETUP.md](HARDWARE_SETUP.md)，向厂商核实开发模式、控制权切换、
-完整关节帧发送频率、增益单位、固件限矩、命令超时和退出清零行为。
-先记录事实，保留 `allow_motion=false` 和所有未经验证的确认项。
+只读阶段保持 `[safety].allow_motion=false`，本机坐标文件中的 `[alignment].verified=false`。这些标志不阻止读取反馈和预览。
 
 ```bash
 python sim2real/run.py --config sim2real/config/local.runtime.toml check
 ```
 
-这一步打印当前解释器依赖、模型 SHA-256、通道建议和部署缺项，不连接机器人。
-SDK 版本 `1.0.9` 和机器人运动主机版本是不同版本号。
+`check` 输出依赖、模型路径与哈希、配置和部署缺项。退出码 0 不代表运动已就绪。
 
-### 2. 网络和只读通信
-
-配置实机 IP；默认有线地址 `10.21.20.1`。状态本地 UDP 端口默认 `9873`，
-关节高频端口 `7895`；检查网卡路由、防火墙与端口占用。
-`connect()` 后等待 `isConnected()`，等待超时会清理连接。
+### 3. 打开窗口
 
 ```bash
-python sim2real/run.py --config sim2real/config/local.runtime.toml inspect \
-  --duration 10 --output outputs/sim2real/boot-01.jsonl
-python sim2real/run.py analyze outputs/sim2real/boot-01.jsonl
+python sim2real/visualize.py
 ```
 
-录制包含原始 SDK 关节顺序、IMU、序列标记/时间戳、逐组年龄、机器人身份和配置。
-文件以排他方式创建，重复文件名会报错。
-JSONL 与分析中的 `observed_hz` 是轮询观察到的缓存 token 变化率，不能替代抓包测量实际 UDP 频率。
-逐组年龄从主机首次看到 token 变化开始计算，不是机器人端的绝对采样时间。
-
-### 3. 上电重复性与 IMU
-
-每次人工上电后，将机器人放在相同可复现姿态，等待稳定，再录制一份文件。
-脚本不远程上电，也不执行标零。
+此入口优先使用 `sim2real/config/local.runtime.toml`，不存在时使用 `runtime.toml` 模板。也可显式指定：
 
 ```bash
-python sim2real/run.py compare-startup \
-  outputs/sim2real/boot-01.jsonl outputs/sim2real/boot-02.jsonl \
-  --output outputs/sim2real/startup-comparison.json
+python sim2real/visualize.py --config sim2real/config/local.runtime.toml
 ```
 
-输出各通道平均值、标准差和跨次录制的均值极差。检查整个录制是否静止；
-比较不同物理姿态的读数不能用于判断上电零位稳定性。
-上电姿态不是机械零位。确认 SN/机型/固件后填写 calibration.identity。
-IMU 需通过已知水平、倾斜和旋转姿态确定四元数代表 sensor→world 还是 body→world，
-填写 sensor_to_body、gyro_bias 后再设 `imu.verified=true`。
-框架使用姿态四元数计算归一化重力方向，不直接把加速度计读数当重力。
-
-### 4. 被动关节标定
-
-在厂商允许人工移动关节的条件下，每次只改变一个关节，将摆动前后两个静止姿态分别录制。
-模型角变化必须来自已知参考姿态或量具，不能凭旋转印象猜测角度。
-例如要核对 FR roll 通道：
+不连接机器人即可熟悉界面：
 
 ```bash
-python sim2real/run.py calibrate \
-  --before outputs/sim2real/fr-roll-before.jsonl \
-  --after outputs/sim2real/fr-roll-after.jsonl \
-  --joint fr_hip_roll_joint --model-delta 0.1 \
-  --output outputs/sim2real/fr-roll-evidence.json
+# 模拟反馈，使用配置中的真实 ONNX 模型进行预览
+python sim2real/visualize.py --demo
+
+# 不加载模型，只看模拟反馈与姿态
+python sim2real/visualize.py --demo --no-policy
 ```
 
-这里的 `0.1` 仅示意一个已知参考变化值，不是运动命令。
-若 before 姿态中的模型角已知，可以加 `--reference-angle` 生成 offset 建议。
-报告输出候选 SDK 通道、sign、offset、其他通道同时变化/姿态不稳定等问题；
-不会自动覆盖 TOML，也不会把建议设为已确认。
-
-人工复核后填写对应行的 sdk_index/sign/offset 与确认项。
-工作限位要依据官方可用范围和测量确定；脚本不自动扫描机械极限。
-
-```text
-q_model = sign * q_sdk[sdk_index] + offset
-dq_model = sign * dq_sdk[sdk_index]
-q_sdk_target[sdk_index] = sign * (q_model_target - offset)
-```
-
-当前阶段可生成点动计划检查转换，但仍不发送指令：
+统一 CLI 提供同一窗口。CLI 默认使用模板，使用本机配置时显式传入 `--config`：
 
 ```bash
-python sim2real/run.py --config sim2real/config/local.runtime.toml jog \
-  --joint fr_hip_roll_joint --delta 0.01
+python sim2real/run.py --config sim2real/config/local.runtime.toml monitor
 ```
 
-主动点动是独立入口。需要显式 `--live --arm --output`、被测关节的完整被动标定、
-本体支撑确认、实测点动参数和固件保护确认，才会创建 JointLevelControl。
-点动时其他关节 kp/kd 都为零，不会自动维持站姿。
-通过一个往返目标核对方向后，再检查其他关节；标定报告仍需人工复核。
-当前执行 1～4 步时，保留 `allow_motion=false`，无需执行主动点动。
+安装本项目后也可使用 `bpx-monitor`；新增入口需重新执行可编辑安装。
 
-## 参数确认后：离线回放与实机部署
+### 4. 接上网线，读取实机反馈
 
-模板默认 H=10、每帧 45 维、450 维 Actor、50 Hz，不依赖基座线速度。
-历史布局为“每个观测项内旧到新”，首帧填满，站立历史每次进入重新建立，
-行走历史持续更新。默认模型 Walk 和 Stand 都必须是 `[1,450]→[1,12]`，
-本实机入口不自动替换缺少的专家模型，也不把 Critic 的 480 维输入用于推理。
+按厂商流程完成本体支撑、上电和必要初始化，再配置有线网卡、填写机器人 IP，点击“连接只读反馈”。网线连接机器人时，Wi-Fi 可以继续上网；有线直连接口不配置上网默认网关，具体步骤见 [操作手册](OPERATION_GUIDE.md)。
+
+窗口只创建官方 `RequestRobotState`，不创建运动/关节控制对象。SDK 的 `connect()` 本身可能同步机器人时间。关闭窗口只结束读取，不负责让本体停车或坐下。
+
+### 5. 连接电脑 USB/蓝牙手柄
+
+单个手柄自动识别，沿用 MuJoCo 的 Linux 手柄映射：左摇杆上下/左右对应 vx/vy，右摇杆左右对应 wz。死区 0.1，速度范围使用 `[control].command_limit`。多个手柄时先列出，再指定设备：
 
 ```bash
-python sim2real/run.py --config sim2real/config/local.runtime.toml replay \
-  outputs/sim2real/boot-01.jsonl --output outputs/sim2real/replay-01.jsonl
+python sim2real/visualize.py --list-gamepads
+python sim2real/visualize.py --gamepad-index 0
+# 也可指定实际设备路径
+python sim2real/visualize.py --gamepad-device /dev/input/eventN
 ```
 
-离线按 50 Hz 选择最近的过去状态，不读取未来帧；保持旧帧时增加数据年龄。
-首次连接后不完整的启动样本被跳过，数量写入输出 metadata；中途反馈丢失仍会报错。
-回放输出原始 action、观测、模型/SDK 目标和配置。未标定时回放只能检查软件连通性。
-回放中的新策略目标不会改变已录制轨迹，所以不构成闭环运动性能验证。
-`--enforce-limits` 在所有数值限位、速度、跟踪误差和固件限矩已填写后，
-增加与实机相同的目标保护计算；前提仍是录制数据充分、身份一致。
+手柄未连接、拔出或设备不可读时显示 `—` 和原因，不伪装成零输入；恢复后重建预览。DEMO 使用模拟手柄自动切换，不读取真实设备。读取电脑手柄不会让机器人行走，也不会触发起身。
 
-部署前填写所有 `check` 列出的项，尤其：
+## 窗口应该怎么读
 
-- 每个关节的标定与工作限位，IMU 安装方向、固件身份。
-- 实测 send_rate_hz、固件看门狗与硬限矩、确认可用的 kp/kd。
-- target_speed_rad_s、joint_speed_rad_s、tracking_error_rad、takeover_position_error_rad。
-- 站立接管与退出策略实测；本实现只支持经过实测的 `zero_joint_command` 退出方案。
+按顺序检查：**连接来源与身份 → joint/IMU 年龄 → 关节映射与姿态 → 模型状态与策略目标 → 曲线**。
 
-退出清零可能失去支撑力；部署前必须确认这一行为适用于现场。
-TCP 断开时主机无法发停止命令；故障处理依赖已确认的机器人端看门狗和物理急停。
-软件估算 PD 力矩不能代替固件的硬限矩，也不能保证 SDK 发包与电机执行完成。
+| 列或区域 | 含义 |
+| --- | --- |
+| 关节 / P,S | 策略索引 P 和当前配置的 SDK 通道 S，均从 0 开始 |
+| SDK q | 当前配置所选 SDK 通道的原始角度 |
+| 官方 q | 按官方关节通道直接读取的角度，也是反馈，非默认站姿 |
+| 当前 q / dq | 模型角 `sign × SDK q + offset`；模型角速度 `sign × SDK dq` |
+| SDK 力矩* | 原始反馈，不做方向转换；单位以固件说明为准 |
+| action | 所选 Stand/Walk 模型的原始输出 |
+| 策略 q | `q_default + action_scale × action`，未接管混合、未限幅 |
+| SDK 目标 | 策略目标转换回 SDK 坐标，仅展示，未发送 |
+| 目标−反馈 | `策略 q − 当前 q`，不是闭环跟踪误差 |
+| 灰色 / 青色骨架 | 官方默认解释 / 当前配置转换后的反馈姿态 |
+| 橙色骨架 | 当前模型的目标关节姿态，尚未执行 |
 
-`run` 默认仅打印就绪项；以下是后续已完成标定时的运动入口示意：
+角度使用 rad，角速度使用 rad/s；四元数按 xyzw 显示，RPY 按 ZYX 解算并使用度。骨架采用官方 URDF 连杆尺寸，不估计实机离地高度或足端接触。默认转换相同时三个 q 相等，灰色和青色骨架重合；这仍需与物理本体核对。
+
+`—` 表示没有有效显示值，不表示 0。joint/IMU 年龄表示主机观察到更新标记变化后经过的时间，不是端到端网络延迟。反馈缺失、过期或会话结束时，策略预览暂停并重建历史；旧反馈和历史曲线可能仍保留在屏幕上。
+
+窗口根据有效的机器人运动状态和电脑手柄输入自动选择 Stand/Walk/STOPPING，与部署控制器共用切换阈值、延时和 command 变化率限制；只推理选中模型。Stand command 恒为零，松开摇杆后经过 STOPPING 再回 Stand。趴卧、起身、阻尼、其他步态、倾角超限或手柄不可读时暂停策略预览。
+
+顶部显示自动选择的策略、固件状态/步态/控制来源，以及只读的实时 vx/vy/wz；不提供手动策略切换、速度输入框或应用按钮。这里的“当前策略”是只读状态机选择，不代表 SDK 已确认固件执行本机 ONNX 权重。手柄输入和策略目标均未发送。模型加载失败不阻止读取反馈。
+
+![顶部信息放大图：自动选择的策略、SDK 状态与电脑手柄实时输入](docs/window_guide/figures/12-auto-policy-input.png)
+
+上图分别展示 DEMO 零输入时的 Stand 和持续输入时的 Walk。第二行的固件步态与第一行的本机模型选择是不同信息；第三行显示手柄输入，不是可编辑的预览指令。
+
+详细算例、颜色含义、姿态核对与故障排查见 [窗口图解手册](WINDOW_GUIDE.md)。
+
+### DEMO 中青色骨架为什么看起来不动
+
+DEMO 用于演示反馈显示、坐标转换、策略推理和自动切换。它没有物理仿真，也不会把策略目标执行后生成新的反馈，因此切换到 Walk 后，青色骨架不会跟随橙色目标迈腿行走。
+
+![DEMO Walk 骨架标注：青色模拟反馈与橙色未执行目标，以及刷新检查方法](docs/window_guide/figures/11-demo-feedback-target.png)
+
+| 显示内容 | DEMO 中的数据来源与变化 |
+| --- | --- |
+| 灰色 / 青色骨架 | 同一份程序生成的关节和四元数反馈，分别按官方定义和当前配置解释；默认配置下两者重合 |
+| 关节反馈 | 在默认站姿附近做幅度 `0.035 rad`（约 `2°`）的正弦变化，腿部动作很小 |
+| 机身姿态 | 四元数生成缓慢的旋转变化；Roll/Pitch/Yaw 幅度分别约 `10.3° / 8.0° / 17.2°` |
+| 机身位置 | 绘图原点固定，不向前移动，也不计算离地高度或足端接触 |
+| 橙色骨架 | 自动选中模型的目标关节角，使用当前反馈的机身姿态绘制；目标不回写到模拟反馈 |
+
+DEMO 的模拟手柄按 18 秒周期变化：前 6 秒零输入、中间 6 秒 `vx=0.35 m/s`、最后 6 秒零输入。状态机根据阈值和延时经历 Stand→Walk→STOPPING→Stand；这个过程只改变策略推理，不让反馈骨架执行步态。
+
+判断界面是否正常刷新，可以选中一个关节，观察“当前 q / dq”和青色曲线，再观察姿态区 RPY 数值是否持续变化。**数值在变但骨架动作不明显**，通常是模拟关节摆幅小；如果连接状态仍显示 DEMO 运行中，而关节和 RPY 数值也一直不变，再检查刷新是否异常。主动断开后保留的最后一帧则不会继续变化。
+
+要验证策略驱动机器人后的行走效果，使用 [MuJoCo sim2sim](../sim2sim/README.md)。接入实机时，青色骨架随实机反馈变化；只读窗口中的手柄输入和橙色目标仍不发送给机器人。
+
+### 字号
+
+默认正文和加粗数值均为 **32 号**，右上“字号”可选 12～48；表格可横向/纵向滚动。保存下次启动字号，在本机 runtime 配置中设置：
+
+```toml
+[monitor]
+font_size = 32
+```
+
+下拉框只调整当前窗口，不写回配置。修改配置或模型文件后，需要关闭并重启窗口。
+
+## 配置与策略契约
+
+| 文件 / 项目 | 用途或默认值 |
+| --- | --- |
+| `config/runtime.toml` | 网络、模型、控制保护和窗口参数模板 |
+| `config/local.runtime.toml` | 本机实际使用的运行配置 |
+| `config/joint_calibration.template.toml` | 身份、整体对齐确认、IMU 和可选关节覆盖模板 |
+| `config/local.calibration.toml` | 本机坐标配置，需由 runtime 的 `calibration_file` 引用 |
+| SDK 默认映射 | 策略顺序对应 `[0,3,6,9,1,4,7,10,2,5,8,11]` |
+| Walk / Stand 模型 | `[1,450] → [1,12]`，H=10，按观测项分别堆叠 |
+| 默认每腿角度 / action scale | `[0,0.7,-1.4]` rad / `0.5` |
+| 策略 / 部署发送频率 | 50 Hz / 模板 100 Hz；只读窗口不发送目标 |
+
+当前 450 维 Actor 不使用基座线速度。未配置 `[[joints]]` 时自动使用官方通道、`sign=1`、`offset=0` 和 URDF 模型范围；旧的关节覆盖仍可加载，但逐关节 verified 标志不再参与就绪检查。
+
+首次接入要核对默认四元数解释是否与真实方向一致；IMU 安装旋转默认单位矩阵、gyro_bias 默认零，不重复补偿固件已经处理的转换。模型范围不代表固件硬限矩、硬限速或实机可用范围已经确认。
+
+“官方定义 / 当前配置”页提供参数对照。官方关节示例的 kp=100、kd=2 和目标 `[0,0.8,-1.8]` 是示例值，不应自动覆盖当前训练契约或增益。
+
+## 保存与离线复查
+
+```bash
+# 连接后保存原始反馈与策略预览，使用新的文件名
+python sim2real/visualize.py --output outputs/sim2real/monitor-01.jsonl
+
+# 回放原始反馈，不连接 SDK
+python sim2real/visualize.py --recording outputs/sim2real/monitor-01.jsonl
+
+# 分析原始反馈统计
+python sim2real/run.py --config sim2real/config/local.runtime.toml analyze \
+  outputs/sim2real/monitor-01.jsonl
+```
+
+输出文件排他创建，不覆盖已有记录；再次开启会话时换新文件名。窗口回放用 **当前配置和模型重新推理**，不会原样播放已保存的 `preview`。回放从录制读取手柄输入，不读取当前电脑手柄；旧录制未保存输入时，只显示反馈和姿态。要复现旧结果，保留原配置、模型文件和哈希；旧 preview 可在 JSONL 中直接查看。
+
+## 从对齐到实机部署
+
+完成实物核对后，在本机坐标文件中确认一次 `[alignment].verified=true`。窗口不会自动设置它，DEMO 运行成功或三个 q 相等也不构成对齐验收。
+
+部署前还需核对身份、增益、站姿控制权接管、命令频率、固件看门狗和退出行为，填写真实限矩及软件保护阈值。使用以下命令只做预检查：
 
 ```bash
 python sim2real/run.py --config sim2real/config/local.runtime.toml run
-# 后续部署阶段才执行，需 allow_motion=true 与所有前提确认：
-python sim2real/run.py --config sim2real/config/local.runtime.toml run \
-  --live --arm --duration 10 --vx 0 \
-  --output outputs/sim2real/stand-live-01.jsonl
 ```
 
-创建 SDK 前加载模型，建立高频关节会话后核对 SN/型号/固件/SDK，
-至少观察两帧高频反馈更新，检查初始姿态处于标定的站立接管范围。
-第一条完整关节命令保持实测关节角，逐步接入策略。
-每条发送目标经过工作限位与变化率限制；下一次观测使用最终成功发送的目标对应 action。
-PD 在机器人端执行，目标速度与前馈力矩均为零，避免重复施加本地 PD 力矩。
-推理按 50 Hz、发包按已确认发送频率运行，两者独立调度。
-反馈过期、会话变化、身份错误、实际速度/跟踪误差/倾角超限或循环超期均终止本次控制。
-TCP 自动重连不会自动恢复策略；重新检查并显式启动新的运行。
+实际运动需显式 `--live --arm`、`allow_motion=true`、输出日志和已确认参数，完整条件见 [操作手册](OPERATION_GUIDE.md)。当前实机入口从已验证站姿接管，没有自动起身功能；运行到期或 Ctrl+C 的清零退出可能释放支撑力，需要先验证退出行为。
 
-## 离线测试与验证范围
+CLI 保留 `check`、`monitor`、`inspect`、`analyze`、`replay` 和 `run`。原有 `compare-startup`、`calibrate`、`jog` 及对应必做流程已移除。
+
+## 软件验证
 
 ```bash
 python -m unittest discover -s sim2real/tests -p 'test_*.py' -v
-python -m unittest discover -s sim2sim -p 'test_*.py' -v
 ```
 
-实机测试使用模拟 SDK、模拟时钟和注入策略，不连接任何机器人。
-软件测试验证接口与故障处理，不证明固件行为、动力学、停止可靠性或步态稳定性。
-当前实现未在真机上验证。实际测量前不能通过将所有确认项设为 true 来替代验证。
+测试使用模拟 SDK、时钟和策略，并包含可选的本地 ONNX 加载测试。软件测试、窗口预览和离线回放不能代替实机运动验证。
 
-## 参考
+## 官方依据
 
-- 本地官方 SDK：[README.zh-CN.md](../bpx_sdk_open-master/README.zh-CN.md)、[关节示例](../bpx_sdk_open-master/example/joint_level_control_example.py)。
-- 模型契约：[历史任务说明](../ROUGH_HISTORY_TRAINING.md)、[关节顺序指南](../sim2sim/JOINT_ORDER_MAPPING_GUIDE.md)。
-- 官方 SDK：https://github.com/mirrormerobotics/bpx_sdk_open
+- [SDK 状态、运动与关节控制](https://github.com/mirrormerobotics/bpx_sdk_open)
+- [关节索引和名称](https://github.com/mirrormerobotics/bpx_sdk_open/blob/master/include/motion_types.h)
+- [关节控制示例](https://github.com/mirrormerobotics/bpx_sdk_open/blob/master/example/joint_level_control_example.py)
+- [BPX URDF](https://github.com/mirrormerobotics/BPX/blob/master/bpx/urdf/bpx.urdf)
