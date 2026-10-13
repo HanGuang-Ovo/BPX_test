@@ -47,14 +47,11 @@ class TestDiagnostics(unittest.TestCase):
         stand.session = walk.session = None
         return {"stand": stand, "walk": walk}
 
-    def test_official_defaults_and_one_alignment_confirmation(self):
-        self.assertEqual([j.sdk_index for j in self.cfg.joints], [0, 3, 6, 9, 1, 4, 7, 10, 2, 5, 8, 11])
-        self.assertTrue(all(j.sign == 1 and j.offset == 0 for j in self.cfg.joints))
-        self.assertTrue(all(j.minimum < j.maximum for j in self.cfg.joints))
-        blockers = self.cfg.blockers()
-        self.assertEqual(sum("alignment.verified" in b for b in blockers), 1)
-        self.assertFalse(any("direction_verified" in b or "offset_verified" in b for b in blockers))
-        self.assertIn("safety.allow_motion=false", blockers)
+    def test_official_defaults_do_not_require_alignment_or_motion_confirmation(self):
+        self.assertEqual([j.sdk_index for j in self.cfg.joints],[0,3,6,9,1,4,7,10,2,5,8,11])
+        self.assertTrue(all(j.sign==1 and j.offset==0 for j in self.cfg.joints))
+        self.assertTrue(all(j.minimum<j.maximum for j in self.cfg.joints))
+        self.assertEqual(self.cfg.blockers(),[])
 
     def test_override_is_visible_against_unmodified_official_feedback(self):
         joints = tuple(replace(j, sign=-1, offset=0.2) if i == 4 else j for i, j in enumerate(self.cfg.joints))
@@ -139,8 +136,6 @@ class TestDiagnostics(unittest.TestCase):
             {"motion_state": 2},
             {"motion_state": 3},
             {"gait": 12},
-            {"motion_age_s": 0.4},
-            {"motion_age_s": -0.1},
         ):
             sample = replace(self.sample, telemetry={**self.sample.telemetry, **fields})
             policies = self.policies()
@@ -151,28 +146,19 @@ class TestDiagnostics(unittest.TestCase):
             policies["stand"].assert_not_called()
             self.assertTrue(snap["warnings"], fields)
 
-    def test_stale_or_disconnected_feedback_suppresses_and_resets_preview(self):
-        policies = self.policies()
-        probe = PolicyPreview(self.cfg, policies=policies)
-        build_snapshot(self.cfg, self.sample, probe)
-        for bad in (
-            replace(self.sample, joint_age_s=0.2),
-            replace(self.sample, connected=False),
-            replace(self.sample, imu_token=None),
-        ):
-            snap = build_snapshot(self.cfg, bad, probe)
-            self.assertFalse(snap["policies"])
-            self.assertTrue(snap["warnings"])
-        self.assertEqual(policies["stand"].call_count, 1)
-        build_snapshot(self.cfg, self.sample, probe)
-        np.testing.assert_allclose(policies["stand"].call_args.args[0][-12:], 0.0)
+    def test_stale_feedback_and_missing_tokens_do_not_add_a_preview_gate(self):
+        probe=PolicyPreview(self.cfg,policies=self.policies())
+        for bad in (replace(self.sample,joint_age_s=100.),replace(self.sample,imu_token=None)):
+            snap=build_snapshot(self.cfg,bad,probe)
+            self.assertTrue(snap["policies"])
+        disconnected=build_snapshot(self.cfg,replace(self.sample,connected=False),probe)
+        self.assertFalse(disconnected["policies"])
 
-    def test_tilt_drawing_remains_available_but_strategy_pauses_beyond_motion_guard(self):
-        sample = replace(self.sample, quat_xyzw=[math.sqrt(0.5), 0, 0, math.sqrt(0.5)])
-        snap = build_snapshot(self.cfg, sample, PolicyPreview(self.cfg, policies=self.policies()))
-        self.assertFalse(snap["policies"])
+    def test_tilt_drawing_and_preview_do_not_use_a_tilt_stop(self):
+        sample=replace(self.sample,quat_xyzw=[math.sqrt(.5),0,0,math.sqrt(.5)])
+        snap=build_snapshot(self.cfg,sample,PolicyPreview(self.cfg,policies=self.policies()))
+        self.assertTrue(snap["policies"])
         self.assertIsNotNone(snap["attitude"])
-        self.assertIn("倾角", snap["control"]["reason"])
 
     def test_actual_onnx_contract_and_finite_preview(self):
         if not all(self.cfg.model_path(m).exists() for m in ("stand", "walk")):

@@ -12,7 +12,7 @@ from bpx_runtime.policy import OnnxPolicy
 from bpx_runtime.routing import PolicyRouter
 from .calibration import Calibration
 from .config import vector
-from .safety import StateGuard
+from .safety import StateGuard, quaternion_xyzw
 from .state import Sample
 
 
@@ -26,10 +26,8 @@ def rotation_to_rpy(rotation):
 
 
 def attitude(config, sample):
-    q = vector(sample.quat_xyzw, 4, "IMU 四元数 xyzw")
+    q = quaternion_xyzw(sample.quat_xyzw)
     norm = float(np.linalg.norm(q))
-    if not 0.9 <= norm <= 1.1:
-        raise ValueError(f"四元数模长异常：{norm:.4f}")
     raw = rotation_body_to_world(q[[3, 0, 1, 2]])
     settings = config.calibration["imu"]
     extrinsic = np.asarray(settings["sensor_to_body"]).reshape(3, 3)
@@ -86,12 +84,6 @@ def feedback_control(config, sample):
         result["reason"] = "机器人连接已断开"
     elif motion is None:
         result["reason"] = "SDK/录制没有运动状态反馈"
-    elif (
-        telemetry.get("motion_age_s") is None
-        or not math.isfinite(telemetry["motion_age_s"])
-        or not 0 <= telemetry["motion_age_s"] <= max(0.3, config.safety["max_state_age_s"])
-    ):
-        result["reason"] = "运动状态缺失或过期"
     elif motion != 6:
         result["reason"] = result["motion"] + "；不应用 Stand/Walk 预览"
     elif gait != 0:
@@ -163,8 +155,6 @@ class PolicyPreview:
         q = self.cal.position_from_sdk(sample.q)
         dq = self.cal.velocity_from_sdk(sample.dq)
         gravity, angular = self.cal.imu(sample.quat_xyzw, sample.omega)
-        if np.arccos(np.clip(-gravity[2], -1, 1)) > self.config.safety["max_tilt_rad"]:
-            raise RuntimeError("机身倾角超限；保留姿态显示，暂停策略预览")
         old_mode = self.router.mode
         command = self.router.step(control["remote_command"])
         mode = "stand" if self.router.mode == "stand" else "walk"

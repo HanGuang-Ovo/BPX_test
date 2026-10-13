@@ -11,12 +11,12 @@ from unittest.mock import Mock, patch
 import numpy as np
 
 from test_runtime import config, sample, Clock, Source, Policy, ROOT
-from bpx_sim2real.behavior import HardwareController, HardwareFeedback
+from bpx_sim2real.behavior import HardwareController, HardwareFootTrajectory
 from bpx_sim2real.calibration import Calibration
 from bpx_sim2real.cli import main, parser
 from bpx_sim2real.config import load_config
 from bpx_sim2real.runner import run_live
-from bpx_sim2real.safety import StateGuard, TargetGuard
+from bpx_sim2real.safety import StateGuard
 from bpx_runtime.gamepad import (GamepadCommandSource, InputDevice, BTN_TR, EVENT_STRUCT, EV_KEY)
 from bpx_runtime.supervisor import BehaviorMode, BehaviorSupervisor, SupervisorState
 
@@ -37,13 +37,13 @@ def supported_sample(cfg, q, t=0., token=1, *, supported=True):
     sdk_torque = np.empty(12)
     sdk_torque[cal.indices] = cal.sign * torque
     return sample(cfg, t=t, token=token, q=cal.position_to_sdk(q).tolist(),
-                  torque=sdk_torque.tolist(), odom_position=[0., 0., height])
+                  torque=sdk_torque.tolist(), odom_position=[0., 0., height], telemetry={"motion_state": 0})
 
 
 class SupportedSource(Source):
     def __init__(self, cfg, clock, *, supported=True):
         super().__init__(cfg, clock)
-        self.q = Calibration(cfg).position_to_sdk(cfg.control["prone_joint_position"]).tolist()
+        self.q = Calibration(cfg).position_to_sdk(([0.]*4+[.98]*4+[-2.62]*4)).tolist()
         self.supported = supported
 
     def read(self):
@@ -115,55 +115,39 @@ class HardwareBehaviorTest(unittest.TestCase):
         def command():
             return [.3, 0., 0.] if 5.5 <= clock.now() < 6.5 else [0., 0., 0.]
 
-        rows, policies = self.run_source(cfg, clock, source, 8., command, request)
+        rows, policies = self.run_source(cfg, clock, source, 9., command, request)
         modes = [r["mode"] for i, r in enumerate(rows) if i == 0 or r["mode"] != rows[i - 1]["mode"]]
         self.assertEqual(modes, ["waiting_init", "init", "stand", "walk", "stopping", "stand"])
         init = [r for r in rows if r["mode"] == "init"]
         self.assertGreaterEqual(init[0]["host_time"], .3)
-        self.assertGreaterEqual(init[-1]["host_time"] - init[0]["host_time"], 4.45)
-        for prev, cur in zip(source.commands, source.commands[1:]):
-            self.assertLessEqual(np.max(np.abs(cur[2] - prev[2])), .010001)
+        self.assertAlmostEqual(init[-1]["host_time"] - init[0]["host_time"], 3.99, places=2)
         self.assertTrue(policies["stand"].observations)
         self.assertTrue(policies["walk"].observations)
         self.assertEqual(init[0]["kp_model"], cfg.control["kp"])
         self.assertAlmostEqual(max(r["kp_model"][0] for r in init), cfg.init_controller.stiffness)
 
-    def test_no_support_pauses_and_times_out_without_stand(self):
-        cfg, clock = config(True), Clock()
-        source = SupportedSource(cfg, clock, supported=False)
-        with self.assertRaisesRegex(RuntimeError, "init_pd_timeout"):
-            self.run_source(cfg, clock, source, 10., request=lambda: True)
-        self.assertTrue(source.exited)
-        q = Calibration(cfg).position_from_sdk(source.q)
-        feet = HardwareFeedback(cfg, Calibration(cfg)).kinematics.forward(q)
-        np.testing.assert_allclose(feet[:, 2], -.19, atol=1e-5)
+    def test_init_finishes_without_contact_or_odometry_and_without_tracking_gate(self):
+        cfg, clock = config(), Clock()
+        source=SupportedSource(cfg, clock, supported=False)
+        read=source.read
+        source.read=lambda: replace(read(), torque=None, odom_position=None, velocity_body=None,
+                                    odom_token=None, odom_age_s=None)
+        # Feedback never follows the trajectory: there is no tracking-error gate.
+        source.send=lambda kp,target,kd,velocity,ff: source.commands.append(
+            (clock.now(),np.asarray(kp),np.asarray(target),np.asarray(kd)))
+        rows,policies=self.run_source(cfg, clock, source, 5., request=lambda: True)
+        self.assertIn("stand",[r["mode"] for r in rows])
+        self.assertTrue(policies["stand"].observations)
 
-    def test_contact_requires_both_ground_proximity_and_upward_force(self):
-        cfg = config(True)
-        feedback = HardwareFeedback(cfg, Calibration(cfg))
-        good = supported_sample(cfg, cfg.policy["default_joint_position"])
-        state, details = feedback.state(good)
-        self.assertEqual(state.feet_in_contact, 4)
-        np.testing.assert_allclose(details["support_force_estimated_n"], 25., atol=1e-6)
-        for bad in (replace(good, torque=[0.] * 12),
-                    replace(good, odom_position=[0., 0., good.odom_position[2] + .1]),
-                    replace(good, torque=(-np.asarray(good.torque)).tolist())):
-            self.assertEqual(feedback.state(bad)[0].feet_in_contact, 0)
 
-    def test_singular_contact_estimate_does_not_claim_support(self):
-        cfg = config(True)
-        q = [0.] * 4 + [.7] * 4 + [0.] * 4
-        state, details = HardwareFeedback(cfg, Calibration(cfg)).state(supported_sample(cfg, q))
-        self.assertEqual(state.feet_in_contact, 0)
-        self.assertEqual(details["contact_estimate_valid"], [False] * 4)
 
-    def test_pose_mismatch_fails_before_first_motor_command(self):
-        cfg, clock = config(True), Clock()
-        source = SupportedSource(cfg, clock)
-        source.q = Calibration(cfg).position_to_sdk([0.] * 4 + [.5] * 4 + [-2.62] * 4).tolist()
-        with self.assertRaisesRegex(RuntimeError, "接管范围"):
-            self.run_source(cfg, clock, source, .5)
-        self.assertEqual(source.commands, [])
+    def test_observed_knees_below_urdf_range_do_not_block_waiting_or_init(self):
+        cfg,clock=config(),Clock()
+        source=SupportedSource(cfg,clock)
+        source.q=Calibration(cfg).position_to_sdk([0.]*4+[1.2]*4+[-2.81]*4).tolist()
+        rows,policies=self.run_source(cfg,clock,source,5.,request=lambda:True)
+        self.assertTrue(source.commands)
+        self.assertIn("stand",[r["mode"] for r in rows])
 
     def test_handheld_disconnect_ends_session_without_reconnect(self):
         cfg, clock = config(True), Clock()
@@ -174,39 +158,21 @@ class HardwareBehaviorTest(unittest.TestCase):
         self.assertTrue(source.exited)
         self.assertEqual(command.call_count, 2)
 
-    def test_mid_init_tilt_aborts_before_another_motor_command(self):
-        cfg, clock = config(True), Clock()
-        source = SupportedSource(cfg, clock)
-        read = source.read
+    def test_large_valid_tilt_does_not_stop_motion(self):
+        cfg,clock=config(),Clock()
+        source=SupportedSource(cfg,clock)
+        read=source.read
+        source.read=lambda: replace(read(), quat_xyzw=[np.sin(.6),0.,0.,np.cos(.6)])
+        rows,_=self.run_source(cfg,clock,source,1.,request=lambda:True)
+        self.assertTrue(rows)
+        self.assertGreater(source.commands[-1][0],.9)
 
-        def tilted_read():
-            result = read()
-            if clock.now() >= .1:
-                result = replace(result, quat_xyzw=[np.sin(.3), 0., 0., np.cos(.3)])
-            return result
+    def test_450_actor_does_not_require_odometry(self):
+        cfg=config()
+        for changes in ({"odom_age_s":100.}, {"odom_token":None},
+                        {"odom_position":None}, {"velocity_body":None}):
+            StateGuard(cfg).check(replace(sample(cfg),**changes))
 
-        source.read = tilted_read
-        with self.assertRaisesRegex(RuntimeError, "DISABLED.*倾角"):
-            self.run_source(cfg, clock, source, 1., request=lambda: True)
-        self.assertLess(source.commands[-1][0], .1)
-        self.assertTrue(source.exited)
-
-    def test_odometry_stale_or_missing_fails_even_for_450_actor(self):
-        cfg = config(True)
-        good = sample(cfg)
-        for bad in (replace(good, odom_age_s=.2), replace(good, odom_token=None),
-                    replace(good, odom_position=None), replace(good, velocity_body=None)):
-            with self.assertRaises((RuntimeError, ValueError)):
-                StateGuard(cfg).check(bad, hardware=True, require_odometry=True)
-
-    def test_init_gain_torque_guard_uses_actual_gains(self):
-        cfg = config(True)
-        q = np.asarray(cfg.policy["default_joint_position"])
-        cfg.safety["target_speed_rad_s"] = [10.] * 12
-        cfg.firmware["robot_torque_limit_nm"] = [1.] * 12
-        guard = TargetGuard(cfg, q)
-        with self.assertRaisesRegex(RuntimeError, "力矩"):
-            guard.preview(q + .02, q, np.zeros(12), .01, kp=[80.] * 12, kd=[2.] * 12)
 
     def test_unbounded_run_keeps_running_until_operator_interrupt(self):
         cfg, clock = config(True), Clock()
@@ -235,7 +201,7 @@ class HardwareBehaviorTest(unittest.TestCase):
              patch("bpx_sim2real.cli.GamepadCommandSource", return_value=gamepad) as factory, \
              patch("bpx_sim2real.cli.run_live", return_value=1) as run, \
              patch("sys.stdout", new=io.StringIO()), patch("sys.stderr", new=io.StringIO()):
-            self.assertEqual(main(["run", "--live", "--arm", "--output", "unused", "--gamepad-deadman"]), 0)
+            self.assertEqual(main(["run", "--live", "--output", "unused", "--gamepad-deadman"]), 0)
         self.assertEqual(factory.call_args.kwargs["init_button"], BTN_TR)
         self.assertEqual(factory.call_args.kwargs["deadman_button"], 310)
         self.assertEqual(run.call_args.kwargs["command_source"], gamepad.read)
@@ -260,30 +226,26 @@ class HardwareBehaviorTest(unittest.TestCase):
         with patch("bpx_runtime.gamepad.os.read", return_value=packet), self.assertRaisesRegex(OSError, "事件丢失"):
             source.read()
 
-    def test_invalid_init_settings_are_rejected_on_load(self):
-        text = (ROOT / "sim2real/config/runtime.toml").read_text()
-        cal = (ROOT / "sim2real/config/joint_calibration.template.toml").read_text()
-        for old, new in (("duration = 4.0", "duration = 0.0"),
-                         ("support_duration = 1.0", "support_duration = 5.0"),
-                         ("init_base_height = 0.36", "init_base_height = 0.1"),
-                         ("feedback_verified = false", 'feedback_verified = "true"')):
+    def test_invalid_interpolation_timing_is_rejected_on_load(self):
+        text=(ROOT/"sim2real/config/runtime.toml").read_text()
+        cal=(ROOT/"sim2real/config/joint_calibration.template.toml").read_text()
+        for old,new in (("duration = 4.0","duration = 0.0"),
+                        ("support_duration = 1.0","support_duration = 5.0")):
             with tempfile.TemporaryDirectory() as tmp:
-                path = Path(tmp) / "runtime.toml"
-                path.write_text(text.replace(old, new))
-                (Path(tmp) / "joint_calibration.template.toml").write_text(cal)
-                with self.assertRaises(ValueError):
-                    load_config(path)
+                path=Path(tmp)/"runtime.toml"
+                path.write_text(text.replace(old,new))
+                (Path(tmp)/"joint_calibration.template.toml").write_text(cal)
+                with self.assertRaises(ValueError): load_config(path)
 
-    def test_matching_sim2sim_supervisor_and_config(self):
-        import sys
-        sys.path.insert(0, str(ROOT / "sim2sim"))
-        from bpx_sim2sim.config import load_config as sim_config
-        from bpx_sim2sim.supervisor import BehaviorSupervisor as SimSupervisor
-        real = config()
-        sim = sim_config(ROOT / "sim2sim/config/bpx_terrain_history.toml")
-        self.assertIs(SimSupervisor, BehaviorSupervisor)
-        self.assertEqual(real.supervisor, sim.supervisor)
-        self.assertEqual(real.init_controller, sim.init_controller)
+    def test_shared_simulation_kinematics_still_enforces_explicit_limits(self):
+        from bpx_runtime.init_controller import LegKinematics
+        cfg=config()
+        bounded=LegKinematics(list(cfg.policy["joint_names"]),[.11522,-.11522,.11522,-.11522],
+                              .23,.2315648,[[j.minimum,j.maximum] for j in cfg.joints])
+        unrestricted=HardwareFootTrajectory(cfg.init_controller,list(cfg.policy["joint_names"])).kinematics
+        feet=unrestricted.forward(np.asarray([0.]*4+[1.2]*4+[-2.81]*4))
+        with self.assertRaisesRegex(ValueError,"限位"): bounded.inverse(feet)
+        np.testing.assert_allclose(unrestricted.inverse(feet),[0.]*4+[1.2]*4+[-2.81]*4,atol=1e-8)
 
 
 if __name__ == "__main__":

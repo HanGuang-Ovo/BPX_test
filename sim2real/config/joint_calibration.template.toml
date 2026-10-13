@@ -1,31 +1,18 @@
-# 官方 SDK 坐标适配；没有覆盖项时自动采用官方通道顺序、sign=1、offset=0。
-# 关节模型范围来自官方 BPX URDF，不代表固件硬限矩或实际可用范围。
-# 只读窗口/录制/回放不要求填写身份或完成对齐确认。
+# 官方 SDK 坐标适配。identity/alignment 仅作记录，不参与实机启动门槛。
+# 未覆盖关节采用官方 SDK 通道、sign=1、offset=0。
+
 [identity]
+# firmware_version 记录 SDK 运动主机版本，不代表电机/控制器固件。
 serial_number = ""
 robot_model = "BPX"
 firmware_version = ""
 
 [alignment]
-# 在窗口核对 SDK 姿态、关节与训练模型一致后，运动部署前确认一次。
-# 这不是软件自动校准，也不会调用 setZeroPositionsFlag。
 verified = false
 
 [imu]
-# SDK 姿态四元数 xyzw；默认按机体到世界解释，首次接入核对物理姿态。
 quaternion_frame = "body_to_world"
 sensor_to_body = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 gyro_bias = [0, 0, 0]
 
-[odometry]
-# 当前 450 维 Actor 不使用基座线速度；实机行为状态机仍需要验证里程计高度/速度。
-verified = false
-
-# 只有确认实际不一致时才添加覆盖项；无需逐关节手动测量。
-# [[joints]]
-# name = "fr_hip_roll_joint"
-# sdk_index = 3
-# sign = 1
-# offset = 0.0
-# minimum = -0.8727
-# maximum = 0.8727
+# minimum/maximum 若填写，仅作窗口中的模型范围对照，不限制实机命令。

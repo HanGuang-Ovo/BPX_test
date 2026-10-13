@@ -10,7 +10,7 @@
 | --- | --- |
 | [窗口图解使用与问题分析](WINDOW_GUIDE.md) | 看懂每一列、三个 q、姿态、曲线和参数页，按现象排错 |
 | [操作手册](OPERATION_GUIDE.md) | 逐步安装、联网、初始化、录制、回放和准备实机接管 |
-| [硬件接入说明](HARDWARE_SETUP.md) | 核对厂商初始化、控制接口、固件保护与实机条件 |
+| [硬件接入说明](HARDWARE_SETUP.md) | 查看连接和回读记录 |
 
 ![窗口阅读区域标注](docs/window_guide/figures/01-overview.png)
 
@@ -47,13 +47,13 @@ calibration_file = "local.calibration.toml"
 
 核对 `[network].robot_ip` 和 `[policy]` 的两份模型路径。配置相对路径相对于 runtime TOML 所在目录解析；模板中的训练导出文件不保证随仓库提供，也不会自动更新为新训练模型。
 
-只读阶段保持 `[safety].allow_motion=false`，本机坐标文件中的 `[alignment].verified=false`。这些标志不阻止读取反馈和预览。
+`identity` 和 `alignment` 仅作记录，不作为运动启动门槛。实际运动由 `run --live` 显式启动。
 
 ```bash
 python sim2real/run.py --config sim2real/config/local.runtime.toml check
 ```
 
-`check` 输出依赖、模型路径与哈希、配置和部署缺项。退出码 0 不代表运动已就绪。
+`check` 输出依赖、模型路径与哈希、坐标配置及缺少的运行资源。
 
 ### 3. 打开窗口
 
@@ -126,7 +126,7 @@ python sim2real/visualize.py --gamepad-device /dev/input/eventN
 
 `—` 表示没有有效显示值，不表示 0。joint/IMU 年龄表示主机观察到更新标记变化后经过的时间，不是端到端网络延迟。反馈缺失、过期或会话结束时，策略预览暂停并重建历史；旧反馈和历史曲线可能仍保留在屏幕上。
 
-窗口根据有效的机器人运动状态和电脑手柄输入自动选择 Stand/Walk/STOPPING，使用同样的切换阈值、延时和 command 变化率限制；窗口不具备实机部署的起身、接地估计或速度稳定验收，只推理选中模型。Stand command 恒为零，松开摇杆后经过 STOPPING 再回 Stand。趴卧、起身、阻尼、其他步态、倾角超限或手柄不可读时暂停策略预览。
+窗口根据有效的机器人运动状态和电脑手柄输入自动选择 Stand/Walk/STOPPING，使用同样的切换阈值、延时和 command 变化率限制；窗口不执行实机起身，只推理选中模型。Stand command 恒为零，松开摇杆后经过 STOPPING 再回 Stand。趴卧、起身、阻尼、其他步态或手柄不可读时暂停策略预览；不按倾角停用。
 
 顶部显示自动选择的策略、固件状态/步态/控制来源，以及只读的实时 vx/vy/wz；不提供手动策略切换、速度输入框或应用按钮。这里的“当前策略”是只读状态机选择，不代表 SDK 已确认固件执行本机 ONNX 权重。手柄输入和策略目标均未发送。模型加载失败不阻止读取反馈。
 
@@ -171,7 +171,7 @@ font_size = 32
 
 | 文件 / 项目 | 用途或默认值 |
 | --- | --- |
-| `config/runtime.toml` | 网络、模型、控制保护和窗口参数模板 |
+| `config/runtime.toml` | 网络、模型、控制流程和窗口参数模板 |
 | `config/local.runtime.toml` | 本机实际使用的运行配置 |
 | `config/joint_calibration.template.toml` | 身份、整体对齐确认、IMU 和可选关节覆盖模板 |
 | `config/local.calibration.toml` | 本机坐标配置，需由 runtime 的 `calibration_file` 引用 |
@@ -202,30 +202,24 @@ python sim2real/run.py --config sim2real/config/local.runtime.toml analyze \
 
 输出文件排他创建，不覆盖已有记录；再次开启会话时换新文件名。窗口回放用 **当前配置和模型重新推理**，不会原样播放已保存的 `preview`。回放从录制读取手柄输入，不读取当前电脑手柄；旧录制未保存输入时，只显示反馈和姿态。要复现旧结果，保留原配置、模型文件和哈希；旧 preview 可在 JSONL 中直接查看。
 
-## 从对齐到实机部署
+## 实机部署
 
-完成实物核对后，在本机坐标文件中确认一次 `[alignment].verified=true`。窗口不会自动设置它，DEMO 运行成功或三个 q 相等也不构成对齐验收。
-
-部署前还需核对身份、增益、站姿控制权接管、命令频率、固件看门狗和退出行为，填写真实限矩及软件保护阈值。使用以下命令只做预检查：
+仅保留有限数/四元数模长 `[0.5,1.5]` 检查，以及退出时尝试 `kp=0、kd=1` 阻尼。关节范围、限速、限矩、倾角、反馈过期、循环超期、身份匹配和 verified 确认门槛均已移除；起身不要求高度/接地/跟踪误差验收。URDF 范围仅用于窗口对照，超范围不会拒绝接管。
 
 ```bash
+# 离线资源预检查，不连接 SDK
 python sim2real/run.py --config sim2real/config/local.runtime.toml run
-```
 
-实际运动需显式 `--live --arm`、`allow_motion=true`、输出日志和已确认参数，完整条件见 [操作手册](OPERATION_GUIDE.md)。实机入口默认使用电脑手柄：保持实测趴姿等待 RB，执行足端五次轨迹 + IK + PD 起身，
-连续稳定后交给 Stand；摇杆进入 Walk，松杆经过 STOPPING 回 Stand。
-状态机和起身轨迹与 sim2sim 共用。实机采用已验证的里程计高度和力矩/运动学接地估计，
-仅支持 BPX 水平地面起身；新增确认项默认关闭，详见操作手册。
-
-```bash
+# 关闭只读窗口后，在现场终端执行
 python sim2real/run.py --config sim2real/config/local.runtime.toml run \
-  --live --arm --output "outputs/sim2real/live-$(date +%Y%m%d-%H%M%S).jsonl"
+  --live --gamepad-index 0
 ```
 
-省略 `--duration` 持续运行；RB 起身、摇杆速度、可选 LB 使能与 sim2sim 一致。
-运行到期、Ctrl+C 或故障退出会尝试清零，不先减速停车，可能释放支撑力。
+日志自动创建，也可显式指定 `--output`；不再要求 `--arm` 或 `allow_motion`。等待实测姿态时按 RB/R1 起身，4 秒足端轨迹结束后进入 Stand，摇杆进入 Walk，松杆通过 STOPPING 回 Stand。起身继续采用 BPX 五次足端轨迹和解析 IK；实机行为不再使用仿真的高度/接地/跌倒 Supervisor。详细说明见 [操作手册](OPERATION_GUIDE.md#6-实机运动)。
 
-CLI 保留 `check`、`monitor`、`inspect`、`analyze`、`replay` 和 `run`。原有 `compare-startup`、`calibrate`、`jog` 及对应必做流程已移除。
+退出尝试阻尼并断开，阻尼命令不保证送达。只读窗口始终不发送运动或退出阻尼命令。
+
+CLI 提供 `check`、`monitor`、`inspect`、`analyze`、`replay` 和 `run`；`replay --enforce-limits` 已移除。
 
 ## 软件验证
 
@@ -233,7 +227,7 @@ CLI 保留 `check`、`monitor`、`inspect`、`analyze`、`replay` 和 `run`。�
 python -m unittest discover -s sim2real/tests -p 'test_*.py' -v
 ```
 
-测试使用模拟 SDK、时钟和策略，并包含可选的本地 ONNX 加载测试。软件测试、窗口预览和离线回放不能代替实机运动验证。
+测试使用模拟 SDK、时钟和策略，验证有限数/四元数、退出阻尼、取消旧门槛及状态切换，并包含本地 ONNX 加载测试。
 
 ## 官方依据
 

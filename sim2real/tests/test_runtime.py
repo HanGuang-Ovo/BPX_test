@@ -27,42 +27,13 @@ from bpx_sim2real.config import load_config
 from bpx_sim2real.controller import ActorController
 from bpx_sim2real.recording import JsonlWriter, load_samples, resample
 from bpx_sim2real.runner import replay, run_live
-from bpx_sim2real.safety import StateGuard, TargetGuard
+from bpx_sim2real.safety import StateGuard
 from bpx_sim2real.sdk_robot import SDKSource
 from bpx_sim2real.state import Sample
 
 
 def config(ready=False):
-    cfg = load_config(ROOT / "sim2real/config/runtime.toml")
-    if not ready:
-        return cfg
-    raw, cal = copy.deepcopy(cfg.runtime), copy.deepcopy(cfg.calibration)
-    cal["identity"] = {"serial_number": "test-SN", "robot_model": "BPX", "firmware_version": "1.0.15"}
-    cal["alignment"]["verified"] = True
-    cal["odometry"]["verified"] = True
-    raw["safety"].update(
-        allow_motion=True,
-        target_speed_rad_s=[1.0] * 12,
-        joint_speed_rad_s=[10.0] * 12,
-        tracking_error_rad=[0.5] * 12,
-        takeover_position_error_rad=[0.2] * 12,
-    )
-    raw["firmware"].update(
-        joint_control_verified=True,
-        watchdog_verified=True,
-        shutdown_verified=True,
-        gain_units_verified=True,
-        robot_limits_verified=True,
-        watchdog_timeout_s=0.2,
-        robot_torque_limit_nm=[30.0] * 12,
-        shutdown_action="zero_joint_command",
-    )
-    raw["control"].update(gains_verified=True, standing_handover_verified=True,
-                          prone_handover_verified=True, send_rate_hz=100)
-    raw["init_controller"]["verified"] = True
-    raw["supervisor"]["feedback_verified"] = True
-    joints = tuple(replace(j, minimum=-3.0, maximum=3.0) for j in cfg.joints)
-    return replace(cfg, runtime=raw, calibration=cal, joints=joints)
+    return load_config(ROOT / "sim2real/config/runtime.toml")
 
 
 def sample(cfg=None, t=0.0, token=1, **changes):
@@ -87,6 +58,7 @@ def sample(cfg=None, t=0.0, token=1, **changes):
         velocity_body=[0., 0., 0.],
         odom_position=[0., 0., .37],
         identity={**cfg.calibration["identity"], "sdk_version": "1.0.9"},
+        telemetry={"motion_state": 6},
     )
     return Sample(**{**data, **changes})
 
@@ -133,6 +105,8 @@ class Source:
         return sample(self.cfg, t=self.clock.now(), token=self.reads, q=list(self.q), connected=connected)
 
     def send(self, kp, target, kd, velocity, ff):
+        if self.disconnect_at is not None and self.clock.now() >= self.disconnect_at:
+            raise RuntimeError("SDK 连接已断开")
         self.commands.append(
             (self.clock.now(), np.asarray(kp).copy(), np.asarray(target).copy(), np.asarray(kd).copy())
         )
@@ -140,11 +114,16 @@ class Source:
 
 
 class RuntimeTest(unittest.TestCase):
-    def test_template_refuses_motion_before_sdk_creation(self):
-        factory = Mock()
-        with self.assertRaisesRegex(RuntimeError, "未确认|未填写"):
-            run_live(config(), "unused", (0, 0, 0), 1, armed=True, source_factory=factory)
-        factory.assert_not_called()
+    def test_missing_identity_and_confirmation_flags_do_not_block_live(self):
+        cfg, clock = config(), Clock()
+        self.assertEqual(cfg.calibration["identity"]["serial_number"], "")
+        self.assertEqual(cfg.blockers(), [])
+        source = Source(cfg, clock)
+        with tempfile.TemporaryDirectory() as tmp:
+            run_live(cfg, Path(tmp)/"log.jsonl", (0,0,0), .03,
+                     policies={"stand": Policy(0), "walk": Policy(0)},
+                     source_factory=lambda *a, **k: source, clock=clock.now, sleep=clock.sleep)
+        self.assertTrue(source.commands)
 
     def test_preflight_never_construct_sdk(self):
         with patch(
@@ -177,38 +156,48 @@ class RuntimeTest(unittest.TestCase):
         np.testing.assert_allclose(gravity, [0, 0, -1])
         np.testing.assert_allclose(omega, [0, 0.2, 0], atol=1e-8)
 
-    def test_state_age_session_and_identity_failures(self):
-        cfg = config(True)
-        good = sample(cfg)
+    def test_state_guard_rejects_nonfinite_data_and_invalid_quaternion_only(self):
+        cfg = config()
         guard = StateGuard(cfg)
-        guard.check(good, hardware=True)
-        for bad in (
-            replace(good, connected=False),
-            replace(good, session=2),
-            replace(good, joint_age_s=0.11),
-            replace(good, joint_age_s=None),
-            replace(good, identity={}),
-            replace(good, source="ordinary"),
-            replace(good, q=[float("nan")] * 12),
-            replace(good, imu_age_s=0.08),
-        ):
-            with self.assertRaises((RuntimeError, ValueError)):
-                guard.check(bad, hardware=True)
-        with self.assertRaisesRegex(RuntimeError, "过期"):
-            guard.check(good, now=0.11, hardware=True)
+        good = sample(cfg)
+        for changes in ({"q": [float("nan")]*12}, {"dq": [float("inf")]*12},
+                        {"omega": [float("nan")]*3}, {"torque": [float("inf")]*12},
+                        {"acceleration": [float("nan")]*3},
+                        {"quat_xyzw": [0,0,0,.49]}, {"quat_xyzw": [0,0,0,1.51]}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                guard.check(replace(good, **changes))
+        for scale in (.5,.7,1.,1.3,1.5):
+            altered = replace(good, quat_xyzw=[0,0,0,scale], q=[10.]*12, dq=[1000.]*12,
+                              session=99, identity={}, source="ordinary", joint_age_s=100.,
+                              imu_age_s=None, odom_token=None, odom_position=None,
+                              velocity_body=None)
+            guard.check(altered, now=1000., hardware=True)
+            gravity, _ = Calibration(cfg).imu(altered.quat_xyzw, altered.omega)
+            np.testing.assert_allclose(gravity, [0,0,-1])
 
-    def test_target_limits_rate_and_tracking(self):
-        cfg = config(True)
-        q = np.array(DEFAULT_JOINT_POSITION)
-        guard = TargetGuard(cfg, q)
-        result, _, constrained = guard.preview(q + 0.4, q, np.zeros(12), 0.02)
-        np.testing.assert_allclose(result, q + 0.02)
-        self.assertTrue(constrained)
-        guard.commit(result)
-        with self.assertRaisesRegex(RuntimeError, "速度"):
-            guard.preview(q, q, np.full(12, 11), 0.02)
-        with self.assertRaisesRegex(RuntimeError, "跟踪"):
-            guard.preview(q, q + 0.8, np.zeros(12), 0.02)
+    def test_large_finite_policy_target_is_not_joint_clipped_or_rate_limited(self):
+        cfg = config()
+        controller = ActorController(cfg, policies={"stand": Policy(100.), "walk": Policy(100.)})
+        result = None
+        for tick in range(120):
+            result = controller.step(sample(cfg, t=tick*.02), (0,0,0))
+            controller.commit_target(result["target_model"])
+        expected = np.asarray(DEFAULT_JOINT_POSITION)+50.
+        np.testing.assert_allclose(result["target_model"], expected)
+        self.assertGreater(result["target_model"][8], cfg.joints[8].maximum)
+
+    def test_nonfinite_policy_output_never_reaches_motor_command(self):
+        for value in (np.nan, np.inf, -np.inf):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                cfg, clock = config(), Clock()
+                source = Source(cfg, clock)
+                policies = {"stand": Policy(value), "walk": Policy(value)}
+                with self.assertRaisesRegex(RuntimeError, "Actor 输出无效"):
+                    run_live(cfg, Path(tmp) / "log.jsonl", (0, 0, 0), .05,
+                             policies=policies, source_factory=lambda *a, **k: source,
+                             clock=clock.now, sleep=clock.sleep)
+                self.assertEqual(source.commands, [])
+                self.assertTrue(source.exited)
 
     def test_controller_first_command_holds_measured_pose(self):
         cfg = config()
@@ -338,40 +327,27 @@ class RuntimeTest(unittest.TestCase):
         self.assertLessEqual(len(source.commands), 3)
         self.assertTrue(source.exited)
 
-    def test_live_inference_overrun_does_not_send_late_target(self):
-        cfg, clock = config(True), Clock()
+    def test_live_inference_overrun_does_not_add_a_motion_stop(self):
+        cfg, clock = config(), Clock()
         source = Source(cfg, clock)
-
         def slow(obs):
-            clock.sleep(0.03)
+            clock.sleep(.03)
             return np.zeros(12)
+        with tempfile.TemporaryDirectory() as tmp:
+            run_live(cfg, Path(tmp)/"log.jsonl", (0,0,0), .12,
+                     policies={"stand": slow, "walk": slow}, source_factory=lambda *a, **k: source,
+                     clock=clock.now, sleep=clock.sleep)
+        self.assertTrue(source.commands)
+        self.assertTrue(source.exited)
 
-        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(RuntimeError, "超期"):
-            run_live(
-                cfg,
-                Path(tmp) / "log.jsonl",
-                (0, 0, 0),
-                0.2,
-                armed=True,
-                policies={"walk": slow, "stand": slow},
-                source_factory=lambda *a, **k: source,
-                clock=clock.now,
-                sleep=clock.sleep,
-            )
-        self.assertEqual(source.commands, [])
-
-    def test_config_rejects_duplicate_indices_and_false_as_string(self):
+    def test_config_still_requires_a_usable_joint_mapping(self):
         original = (ROOT / "sim2real/config/runtime.toml").read_text()
         calibration = (ROOT / "sim2real/config/joint_calibration.template.toml").read_text()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "runtime.toml"
-            calpath = Path(tmp) / "joint_calibration.template.toml"
-            path.write_text(original.replace("allow_motion = false", 'allow_motion = "false"'))
-            calpath.write_text(calibration)
-            with self.assertRaises(ValueError):
-                load_config(path)
+            path=Path(tmp)/"runtime.toml"
             path.write_text(original)
-            calpath.write_text(calibration + '\n[[joints]]\nname = "fr_hip_roll_joint"\nsdk_index = 0\n')
+            (Path(tmp)/"joint_calibration.template.toml").write_text(
+                calibration+'\n[[joints]]\nname = "fr_hip_roll_joint"\nsdk_index = 0\n')
             with self.assertRaisesRegex(ValueError, "一一映射"):
                 load_config(path)
 
@@ -440,14 +416,39 @@ class SDKTest(unittest.TestCase):
             self.assertEqual(state.joint_token, 2)
             self.assertEqual(r.getJointPositionHighRate.call_count, 2)
 
-    def test_zero_command_is_attempted_after_send_failure(self):
+    def test_damping_is_attempted_after_send_failure_without_zero_command(self):
         r = self.robot()
-        r.setJointCommand.return_value = False
-        sdk = SimpleNamespace(JointLevelControl=Mock(return_value=r), __version__="1.0.9")
+        r.setJointCommand.side_effect = [False, True, True, True]
+        sdk=SimpleNamespace(JointLevelControl=Mock(return_value=r), __version__="1.0.9")
         with self.assertRaisesRegex(RuntimeError, "发送失败"):
-            with SDKSource(config(True), joint_control=True, sdk=sdk) as source:
-                source.send(*[[0.0] * 12] * 5)
-        r.setZeroJointCommand.assert_called_once()
+            with SDKSource(config(), joint_control=True, sdk=sdk) as source:
+                source.send(*[[0.0]*12]*5)
+        self.assertEqual(r.setJointCommand.call_count,4)
+        for call in r.setJointCommand.call_args_list[1:]:
+            self.assertEqual(call.args, ([0.]*12,[0.]*12,[1.]*12,[0.]*12,[0.]*12))
+        r.setZeroJointCommand.assert_not_called()
+        r.disconnect.assert_called_once()
+
+    def test_normal_exit_uses_last_measured_position_and_unit_damping(self):
+        r = self.robot()
+        r.getJointPosition.return_value = [1.2]*12
+        sdk=SimpleNamespace(JointLevelControl=Mock(return_value=r), __version__="1.0.9")
+        source=SDKSource(config(), joint_control=True, sdk=sdk)
+        source.last_position=[1.2]*12
+        with source:
+            source.send(*[[0.0]*12]*5)
+        self.assertEqual(r.setJointCommand.call_args.args,
+                         ([0.]*12,[1.2]*12,[1.]*12,[0.]*12,[0.]*12))
+        r.setZeroJointCommand.assert_not_called()
+
+    def test_exit_damping_error_does_not_mask_original_error(self):
+        r=self.robot()
+        sdk=SimpleNamespace(JointLevelControl=Mock(return_value=r), __version__="1.0.9")
+        with self.assertRaisesRegex(ValueError, "original failure"):
+            with SDKSource(config(), joint_control=True, sdk=sdk) as source:
+                source.send(*[[0.0]*12]*5)
+                r.setJointCommand.side_effect=RuntimeError("damping failed")
+                raise ValueError("original failure")
         r.disconnect.assert_called_once()
 
 

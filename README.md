@@ -74,7 +74,7 @@ BPX_test/
 ├── sim2real/
 │   ├── visualize.py                # 只读反馈、策略预览和姿态窗口
 │   ├── run.py                      # 检查、采集、分析、回放和部署入口
-│   ├── bpx_sim2real/               # SDK 适配、坐标转换、窗口和控制保护
+│   ├── bpx_sim2real/               # SDK 适配、坐标转换、窗口和实机执行
 │   ├── config/                     # 模板及本机 runtime / 坐标配置
 │   ├── docs/window_guide/          # 窗口截图、标注图与 SVG 示意图
 │   ├── WINDOW_GUIDE.md             # 图解阅读与问题分析
@@ -138,6 +138,8 @@ python sim2real/visualize.py --demo
 窗口显示 12 个关节的反馈和预览目标、自动选中策略的原始 action、姿态骨架与参数对照，默认字号 32，可调到 48。电脑 USB/蓝牙手柄输入以只读方式显示，与部署共用的状态机自动选择 Stand/Walk/STOPPING，不提供手动策略或速度输入。预览目标不发送给机器人，“目标−反馈”不是闭环跟踪误差。标注截图和完整分析方法见 [窗口图解手册](sim2real/WINDOW_GUIDE.md)；DEMO 使用模拟反馈，不能证明实机已对齐。
 
 DEMO 中青色骨架来自程序生成的反馈：关节只在默认站姿附近摆动约 ±2°，机身缓慢旋转，绘图位置固定。橙色骨架表示模型目标，目标不会驱动青色反馈，因此 Walk 预览不会显示实际迈腿行走。可观察“当前 q”和 RPY 数值确认刷新；详细说明见 [sim2real README](sim2real/README.md#demo-中青色骨架为什么看起来不动)。验证策略执行后的步态请使用 [MuJoCo sim2sim](sim2sim/README.md)。
+
+实机运动当前仅保留有限数/四元数模长 [0.5,1.5] 检查，以及退出尝试 kp=0、kd=1 阻尼。执行 `python sim2real/run.py --config sim2real/config/local.runtime.toml run --live --gamepad-index 0`，日志自动创建；详细流程见 [实机操作手册](sim2real/OPERATION_GUIDE.md#6-实机运动)。
 
 ## 训练、回放与导出
 

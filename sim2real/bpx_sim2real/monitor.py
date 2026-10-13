@@ -698,7 +698,7 @@ class MonitorWindow:
 
             self.freshness.set(f"joint {age(sample.joint_age_s)} ms    IMU {age(sample.imu_age_s)} ms")
         if self.snapshot and (
-            not self.active or time.monotonic() - self.snapshot["received_at"] > self.config.safety["max_state_age_s"]
+            not self.active or time.monotonic() - self.snapshot["received_at"] > self.config.monitor.get("display_stale_after_s", 0.10)
         ):
             self.refresh_table(stale=True)
             self.policy_status.set("策略预览暂停 · 会话结束或反馈过期；旧值不作为当前输出")
@@ -790,7 +790,7 @@ class MonitorWindow:
             or not self.active
             or not sample.connected
             or sample.joint_age_s is None
-            or sample.joint_age_s > self.config.safety["max_state_age_s"]
+            or sample.joint_age_s > self.config.monitor.get("display_stale_after_s", 0.10)
         )
         result = None if stale else self.snapshot["policies"].get(self.mode.get())
         fmt = lambda x: "—" if x is None else f"{x:+.4f}"
@@ -841,7 +841,7 @@ class MonitorWindow:
             or not self.active
             or not sample.connected
             or sample.imu_age_s is None
-            or sample.imu_age_s > self.config.safety["max_state_age_s"]
+            or sample.imu_age_s > self.config.monitor.get("display_stale_after_s", 0.10)
         )
         scale = min(w / 1.25, h / 0.98)
         right = np.array([0.707, -0.707, 0.0])

@@ -1,4 +1,4 @@
-# 相对路径均相对于本文件所在目录。先复制本文件与标定模板到本机配置目录。
+# 只保留有限数/四元数检查及退出阻尼；相对路径相对于本文件。
 calibration_file = "joint_calibration.template.toml"
 
 [network]
@@ -17,101 +17,36 @@ include_base_lin_vel = false
 observation_dimension = 450
 action_scale = 0.5
 default_joint_position = [0, 0, 0, 0, 0.7, 0.7, 0.7, 0.7, -1.4, -1.4, -1.4, -1.4]
-joint_names = [
-  "fl_hip_roll_joint", "fr_hip_roll_joint", "hl_hip_roll_joint", "hr_hip_roll_joint",
-  "fl_hip_pitch_joint", "fr_hip_pitch_joint", "hl_hip_pitch_joint", "hr_hip_pitch_joint",
-  "fl_knee_joint", "fr_knee_joint", "hl_knee_joint", "hr_knee_joint",
-]
+joint_names = ["fl_hip_roll_joint", "fr_hip_roll_joint", "hl_hip_roll_joint", "hr_hip_roll_joint", "fl_hip_pitch_joint", "fr_hip_pitch_joint", "hl_hip_pitch_joint", "hr_hip_pitch_joint", "fl_knee_joint", "fr_knee_joint", "hl_knee_joint", "hr_knee_joint"]
 
 [control]
+# command_limit/command_slew_rate 定义手柄速度与 Stand/Walk 路由，不限制关节运动目标。
 policy_rate_hz = 50
-# 官方关节示例约 100 Hz；此处采用同一发送周期，运动前核对固件支持。
 send_rate_hz = 100
 kp = [40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40]
 kd = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-gains_verified = false
-standing_handover_verified = false
-prone_handover_verified = false
-# 趴姿仅作接管范围核对；等待期间保持实测姿态，不强拉到该角度。
-prone_joint_position = [0, 0, 0, 0, 0.98, 0.98, 0.98, 0.98, -2.62, -2.62, -2.62, -2.62]
 takeover_duration_s = 2.0
 action_blend_duration_s = 0.3
-command_limit = [1.0, 0.5, 1.0]
+command_limit = [0.7, 0.4, 0.7]
 command_slew_rate = [1.5, 1.0, 2.0]
 walk_enter_threshold = 0.12
 walk_exit_threshold = 0.05
 walk_enter_delay_s = 0.15
-walk_exit_delay_s = 0.30
-minimum_walk_time_s = 0.30
-# 停车先向 Walk 输入零 command，实测速度连续稳定后切 Stand；超时兜底。
+walk_exit_delay_s = 0.3
+minimum_walk_time_s = 0.3
 stopping_duration_s = 1.5
 
-# 与 sim2sim 共用足端五次轨迹 + IK；数值是仿真基线，必须验证实机后确认。
 [init_controller]
+# 足端轨迹按时间完成；不增加接地、高度、跟踪误差或关节范围门槛。
 mode = "pd"
-verified = false
 duration = 4.0
 support_duration = 1.0
 support_depth = 0.19
 standing_depth = 0.38
 stiffness = 80.0
 damping = 2.0
-torque_limit = 30.0
-joint_speed_limit = 2.0
-tracking_error_limit = 0.35
-timeout = 8.0
-
-# WALK 阈值/延时和 command 平滑仍使用 [control]；其余与 sim2sim 同名。
-[supervisor]
-stop_linear_speed = 0.05
-stop_angular_speed = 0.10
-stand_confirm_time = 0.20
-fall_base_height = 0.20
-fall_tilt = 0.70
-init_start_max_tilt = 0.35
-init_abort_tilt = 0.55
-init_base_height = 0.36
-init_tilt = 0.25
-init_confirm_time = 0.50
-# SDK 没有接触传感器；仅支持经验证的水平地面高度 + 力矩/运动学接地估计。
-# 与 calibration.odometry.verified 一同确认；ground_z 必须按 SDK 里程计实测。
-feedback_verified = false
-ground_z = 0.0
-# 官方 toe 碰撞圆柱尺寸；按实际足底核对。
-toe_radius = 0.027
-toe_center_depth = 0.012
-toe_half_width = 0.0179
-contact_height_tolerance = 0.025
-contact_force_threshold_n = 5.0
-contact_jacobian_condition_max = 100.0
-# 策略顺序，Nm；空载力矩/重力偏置须实测，零仅为待验证基线。
-torque_bias_nm = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-
-[firmware]
-expected_sdk_version = "1.0.9"
-joint_control_verified = false
-watchdog_verified = false
-shutdown_verified = false
-gain_units_verified = false
-robot_limits_verified = false
-# 以下为固件实测参数，不沿用仿真中的 30 Nm 假设。数组采用策略顺序。
-watchdog_timeout_s = 0.0
-robot_torque_limit_nm = []
-shutdown_action = "unconfirmed"
-
-[safety]
-allow_motion = false
-# 初始诊断阈值；后续按实测反馈和循环耗时调整。
-max_state_age_s = 0.10
-max_group_skew_s = 0.05
-max_cycle_lateness_s = 0.01
-max_tilt_rad = 0.45
-# 12 元素数组，策略顺序；未填写时禁止策略运动。
-target_speed_rad_s = []
-joint_speed_rad_s = []
-tracking_error_rad = []
-takeover_position_error_rad = []
 
 [monitor]
-# 高分辨率屏幕使用大字号；窗口右上可调整到 48。
 font_size = 32
+# 仅控制只读窗口的旧值提示，不影响实机运动。
+display_stale_after_s = 0.10

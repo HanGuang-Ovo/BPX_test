@@ -25,14 +25,14 @@ mkdir -p outputs/sim2real
 
 在 `local.runtime.toml` 设置 `calibration_file="local.calibration.toml"`。
 模型与坐标文件的相对路径相对于 runtime TOML 所在目录。
-保持 `[safety].allow_motion=false`。
+实机只由 `run --live` 启动；普通预检查和窗口不发送运动命令。
 
 ```bash
 python sim2real/run.py --config sim2real/config/local.runtime.toml check
 ```
 
 确认 SDK 和 ONNX Runtime 可用、模型路径存在。部署缺项不妨碍只读窗口。
-`check` 的退出码 0 不代表运动已就绪。
+`check` 检查运行资源，不要求身份、固件保护或实机验证确认表。
 
 ## 2. 网线连接，同时用 Wi-Fi 上网
 
@@ -130,12 +130,12 @@ python sim2real/visualize.py --gamepad-index 0
 当前两份模型必须 `[1,450]→[1,12]`，默认每腿 `[0,0.7,-1.4]`，action scale=0.5。
 窗口显示 `q_default + 0.5 × action`，没有实机接管混合、目标保护或模型驱动的反馈变化。
 过去动作来自预览递推，不是机器人实际执行历史。它是影子推理，不能用来证明步态稳定。
-超过模型范围的目标会以红色提示；姿态大幅倾斜仍可显示；超过 max_tilt_rad 时暂停策略预览。
+超过模型范围的目标仅以红色提示，不限制实机发送。策略不再按倾角暂停；四元数模长须在 [0.5,1.5]。
 
 “官方定义 / 当前配置”页对照索引、sign/offset、范围、增益、频率、模型文件和示例目标。
 官方示例 kp=100、kd=2、目标 `[0,0.8,-1.8]` 仅为对照，不应自动替换已训练策略参数。
 
-反馈/IMU 缺失显示“—”。断连、数据过期、会话变化时暂停预览并重建历史。
+反馈/IMU 缺失显示“—”。断连或会话变化时重建窗口预览历史；数据年龄和灰色旧值仅用于显示，不作为运动保护条件。
 更新率是 SDK 普通反馈通道，不因窗口调度频率就等于真实 UDP 更新率。
 
 ## 5. 保存与回放
@@ -169,120 +169,47 @@ python sim2real/run.py --config sim2real/config/local.runtime.toml replay \
   outputs/sim2real/state-01.jsonl --output outputs/sim2real/policy-01.jsonl
 ```
 
-`--enforce-limits` 在相关参数填齐后增加目标保护计算。录制反馈不跟随新目标，不构成闭环验证。
+录制反馈不跟随新目标，不构成闭环验证。CLI 回放和实机发送均不增加关节目标限幅、限速或限矩。
 
-## 6. 对齐后再部署
+## 6. 实机运动
 
-确认关节/IMU 与实际模型对应后，在本机坐标文件中设置一次：
+实机运动保护仅保留两项：
 
-```toml
-[alignment]
-verified = true
-```
+1. 反馈、观测、目标和策略输出必须为有限数，IMU 四元数模长须在 `[0.5,1.5]`，随后归一化。
+2. 运行到期、Ctrl+C 或异常退出后，若已发送关节命令且连接可用，尝试发送三次 `kp=0、kd=1、dq=0、tff=0` 阻尼命令，然后断开；退出尝试不保证送达。
 
-不再填写每关节 mapping/direction/offset/limits_verified 或 imu.verified。
-只读窗口不会自动设置这个标志，也不会因为数值相等就宣布实机已经验证。
-填写 SDK 读出的 SN、型号、固件版本，并备份配置和采集记录。
+身份、SDK/主机版本及 alignment 仅作记录；不再要求 verified、固件限矩、看门狗、关节工作范围、限速、跟踪误差、接管姿态、倾角、反馈年龄/组时间差或循环超期确认。起身不依赖里程计高度或接地估计。`minimum/maximum` 仅用于窗口的模型范围对照。`[safety]`、`[firmware]`、`[supervisor]` 已从当前配置移除；旧配置中的这些段落也不参与运行。
 
-实际运动仍需确认固件开发模式、站姿控制权切换、增益、命令频率、看门狗、
-固件限矩、退出行为，以及目标变化率、实际速度、跟踪误差和接管姿态阈值。
-这些保护项与“重新做电机标定”不同，不能根据 SDK 示例自动视为已通过。
-默认完整命令发送频率改为示例中的约 100 Hz，策略保持 50 Hz。
+模型形状、关节排列、坐标变换、端口和轨迹时序仍需符合运行接口。`command_limit` 定义手柄的机体速度范围，Stand/Walk 迟滞和 command 平滑用于策略路由；它们不限制关节目标。
+
+先做离线资源检查：
 
 ```bash
 python sim2real/run.py --config sim2real/config/local.runtime.toml run
 ```
 
-### 实机手柄流程
-
-实机与 sim2sim 共用 `bpx_runtime/supervisor.py` 的状态机和
-`bpx_runtime/init_controller.py` 的足端五次轨迹、解析 IK。默认操作为：
-
-```text
-水平趴姿接管 → WAITING_INIT ── RB 按下沿 ──→ INIT
-INIT ── 轨迹完成且连续稳定 ──→ STAND
-STAND ── 持续摇杆输入 ──→ WALK
-WALK ── 松杆 ──→ STOPPING ── 稳定确认或超时 ──→ STAND
-STOPPING ── 再次持续输入 ──→ WALK
-异常 → DISABLED → 结束本次控制
-```
-
-- `WAITING_INIT` 保持接管时实测趴姿，速度为零，不运行 Stand/Walk 模型；
-  `[control].prone_joint_position` 仅用于接管范围核对，不把本体强拉到模板姿态。
-- RB (`BTN_TR=311`) 每次松开到按下触发一次；一直按住不重复起身。
-  已站立、起身中或行走中按 RB 不重新起身。若本体已符合站姿接管条件，可直接进入 Stand。
-- `INIT` 从实测姿态开始，先收脚到低位支撑，再竖直伸展。轨迹按发送频率更新；
-  跟踪误差过大时暂停，四足接地估计未满足时停在支撑点，超时则禁用并退出。
-  轨迹完成、高度/倾角/线角速度及四足接地条件连续满足 `init_confirm_time` 后进入 Stand。
-- 左摇杆上下/左右对应 vx/vy，右摇杆左右对应 wz，死区 0.1；速度范围来自
-  `[control].command_limit`。可选 `--gamepad-deadman`：按住 LB 才接收速度，RB 独立生效。
-- Stand/Walk 迟滞、最小行走时间、STOPPING 的再启动防抖、速度稳定确认和超时
-  与 sim2sim 使用同一实现。STOPPING 继续使用 Walk 模型并平滑速度至零；Stand 指令恒为零。
-  历史观测记录最终成功发送的 action，起身转 Stand 时重建 Stand 历史并平滑接管。
-
-### 实机反馈与配置确认
-
-SDK 没有足端接触传感器接口，本实现仅支持 **BPX 在水平地面上的接地估计**。
-行为图与 sim2sim 一致，反馈来源不同：实机高度为 `LegOdom.position[2] - ground_z`，
-平面速度来自 `velocity_body`，姿态/角速度来自已对齐 IMU。
-即使 Actor 是 450 维、观测不使用线速度，实机状态机仍要求新鲜、已验证的里程计。
-缺失、过期、会话变化及手柄断开/事件丢失均结束控制，不自动重连恢复运动。
-
-接地估计同时要求：足底运动学高度接近配置地面、反馈力矩反解的向上支撑力超过阈值，
-且 Jacobian 非奇异。使用官方 BPX 连杆和足底圆柱尺寸，力矩先重排、乘方向 sign 并减去
-`torque_bias_nm`，按静态近似 `tau = -J^T F` 反解支撑力。
-这不是接触传感器测量；腿部重力、惯性、里程计漂移、足底形变及吊装外力都可能影响估计。
-日志字段明确记录 `feet_in_contact_estimated`、足底高度、支撑力和估计有效性。
-没有可靠的高度/力矩反馈时，不能用固定高度或“默认四足接地”代替验收。
-
-本机配置新增的确认项默认保持 false，完成实际核对后再设置：
-
-| 配置项 | 确认内容 |
-| --- | --- |
-| `control.prone_handover_verified` | 实际水平趴姿在接管范围内，等待期间的支撑/增益正确 |
-| `init_controller.verified` | 实机收脚/抬升轨迹、起身增益、限速、限矩、暂停及超时行为 |
-| `supervisor.feedback_verified` | 里程计高度、速度、Nm 力矩方向、地面和接地估计可靠 |
-| 标定文件 `odometry.verified` | SDK 里程计坐标、单位及更新信息已核对 |
-
-`ground_z` 应按里程计 z 与实测机体参考原点高度确定，不假定启动时里程计零点就是地面。
-`toe_radius/toe_center_depth/toe_half_width`、接地高度容差、支撑力阈值和力矩偏置须按实际足底
-及反馈核对。`[init_controller]` 的 80/2 增益、30 Nm 和 4 秒轨迹来自仿真基线，不能视为
-实机已验证参数。发送增益在起身前后平滑切换，软件限矩按当次实际发送增益计算，
-同时受实测固件限矩和 Init 限矩约束。
-
-原有身份、固件保护、站姿接管及全部软件保护仍需就绪。
-`[safety].max_tilt_rad` 是额外的实机硬停止阈值；若比 Supervisor 阈值严格，会提前禁用，
-新增起身不会自动放宽它。当前模板 0.45 rad 比 `init_abort_tilt=0.55` 更严格。
-
-### 启动与退出
-
-先只做预检查（不会创建 SDK 对象）：
-
-```bash
-python sim2real/run.py --config sim2real/config/local.runtime.toml run
-```
-
-`blockers` 为空、运动条件已经确认，保持本体支撑和现场停止措施，再开启
-`allow_motion` 并运行；默认自动选择单个手柄：
+关闭只读窗口，避免 SDK 反馈端口占用。实机启动命令：
 
 ```bash
 python sim2real/run.py --config sim2real/config/local.runtime.toml run \
-  --live --arm \
-  --output "outputs/sim2real/live-$(date +%Y%m%d-%H%M%S).jsonl"
+  --live --gamepad-index 0
 ```
 
-启动后终端显示状态，趴姿时等待 RB。多个手柄使用 `--gamepad-index 0`，或
-`--gamepad-device /dev/input/eventN`，两者互斥。省略 `--duration` 会持续运行；
-指定 `--duration 60` 则从接管开始计时 60 秒，等待 RB 的时间也计入。
-不要在默认手柄模式添加固定速度参数。
+省略 `--output` 时自动在 `outputs/sim2real` 创建带上海时间戳的 JSONL；也可指定新文件名。`--arm` 仅兼容旧命令，不再要求。
 
-仅从已站姿进行固定指令试验，可显式选 `--command-source constant --vx 0 --vy 0 --wz 0`；
-该模式没有起身请求源，趴姿会一直等待，不会自动起身。
+```text
+固件 Motion=6 → STAND
+其他固件状态 → WAITING_INIT → 按 RB/R1 → INIT
+INIT → 标称轨迹 4 秒完成 → STAND
+STAND → 持续摇杆输入 → WALK
+WALK → 松开摇杆 → STOPPING → 1.5 秒后 STAND
+```
 
-松开摇杆通过 STOPPING 减速回 Stand，进程继续保持支撑。
-**Ctrl+C、运行到期或故障会退出控制，并尝试清零关节指令，不先完成 STOPPING；
-清零可能释放支撑力。** 先确认实际退出/看门狗行为，不能把进程退出当作保持站立或坐下。
-只读窗口仍不发送运动和起身命令，也不接管这个运行中的控制进程。
+等待阶段保持实测关节角，不运行策略。Init 捕获实测姿态，先收脚到支撑点，再抬升；沿用五次足端轨迹和 BPX 解析 IK，取消模型关节范围、速度/力矩、跟踪误差、接地、高度、倾角及起身超时保护。轨迹完成后立即进入 Stand，不额外等待稳定验收。
+
+Sony 手柄 R1 对应 RB；左摇杆控制 vx/vy，右摇杆控制 wz。`--gamepad-deadman` 可选，按住 L1/LB 才接收摇杆速度，RB/R1 独立生效。松杆通过 STOPPING 回 Stand。手柄/SDK 读写失败属于 I/O 错误，会退出并执行阻尼尝试。
+
+`--duration 60` 可指定接管后的总运行时长；省略则持续运行。固定指令入口可选 `--command-source constant --vx 0 --vy 0 --wz 0`，没有 RB 起身请求源；非 Motion=6 状态将保持等待。
 
 ## 7. 软件验证
 
@@ -290,4 +217,4 @@ python sim2real/run.py --config sim2real/config/local.runtime.toml run \
 python -m unittest discover -s sim2real/tests -p 'test_*.py' -v
 ```
 
-模拟测试验证坐标、历史、新鲜度、只读 SDK 生命周期和控制保护，不验证实际动力学或固件行为。
+测试使用模拟 SDK 和录制数据，覆盖有限数/四元数、退出阻尼、取消旧门槛后的接管、起身和策略路由；不发送实机命令。

@@ -3,6 +3,7 @@
 import argparse
 from contextlib import ExitStack
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import hashlib
 import importlib.util
 import json
@@ -121,7 +122,7 @@ def parser():
     from .monitor import add_gamepad_arguments
 
     add_gamepad_arguments(monitor)
-    sub.add_parser("check", help="离线检查配置、模型和未确认项；不连接机器人")
+    sub.add_parser("check", help="离线检查配置、模型和依赖；不连接机器人")
     observe = sub.add_parser("inspect", help="只读状态录制；不发送运动命令")
     observe.add_argument("--output", type=Path, required=True)
     observe.add_argument("--duration", type=float, default=10.0)
@@ -132,15 +133,14 @@ def parser():
     off = sub.add_parser("replay", help="离线策略推理；不连接 SDK")
     off.add_argument("recording", type=Path)
     off.add_argument("--output", type=Path, required=True)
-    off.add_argument("--enforce-limits", action="store_true", help="使用已填写的工作限位和速度约束")
     off.add_argument("--vx", type=float, default=0.0)
     off.add_argument("--vy", type=float, default=0.0)
     off.add_argument("--wz", type=float, default=0.0)
-    run = sub.add_parser("run", help="默认仅检查就绪项；实机需要 --live --arm")
+    run = sub.add_parser("run", help="默认仅检查运行资源；--live 执行实机控制")
     run.add_argument("--live", action="store_true")
-    run.add_argument("--arm", action="store_true")
+    run.add_argument("--arm", action="store_true", help=argparse.SUPPRESS)
     run.add_argument("--duration", type=float, help="可选运行秒数；省略则运行至 Ctrl+C 或故障")
-    run.add_argument("--output", type=Path)
+    run.add_argument("--output", type=Path, help="日志路径；省略则自动创建带时间戳的 JSONL")
     run.add_argument("--vx", type=float, default=0.0)
     run.add_argument("--vy", type=float, default=0.0)
     run.add_argument("--wz", type=float, default=0.0)
@@ -183,7 +183,7 @@ def main(argv=None):
                 write_json(args.output, result)
         elif args.command == "replay":
             count = replay(
-                config, args.recording, args.output, (args.vx, args.vy, args.wz), enforce_limits=args.enforce_limits
+                config, args.recording, args.output, (args.vx, args.vy, args.wz)
             )
             result = {"policy_steps": count, "output": str(args.output), "mode": "offline"}
         elif args.command == "run":
@@ -191,14 +191,13 @@ def main(argv=None):
                 result = {
                     "mode": "preflight",
                     "blockers": config.blockers("deploy"),
-                    "note": "未创建 SDK 对象；--live --arm 后才进入关节控制",
+                    "note": "未创建 SDK 对象；--live 才进入关节控制；仅检查有限数与四元数模长，退出尝试阻尼",
                 }
             else:
                 if args.output is None:
-                    raise ValueError("live 策略必须指定 --output 日志")
+                    stamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d-%H%M%S-%f")
+                    args.output = Path("outputs/sim2real") / f"live-{stamp}.jsonl"
                 require_ready(config, "deploy")
-                if not args.arm:
-                    raise ValueError("实机运动必须显式 --arm")
                 duration = positive(args.duration, "duration") if args.duration is not None else None
                 with ExitStack() as stack:
                     gamepad = None
@@ -209,7 +208,7 @@ def main(argv=None):
                         gamepad = stack.enter_context(GamepadCommandSource(
                             device, tuple(config.control["command_limit"]), init_button=BTN_TR,
                             deadman_button=BTN_TL if args.gamepad_deadman else None))
-                        print("手柄已连接：趴姿等待 RB 起身；摇杆控制速度。Ctrl+C 退出会清零关节指令。", file=sys.stderr)
+                        print("手柄已连接：等待 RB 起身；摇杆控制速度。退出尝试 kp=0、kd=1 阻尼。", file=sys.stderr)
                     elif args.gamepad_device is not None or args.gamepad_index is not None or args.gamepad_deadman:
                         raise ValueError("constant 模式不能指定手柄参数")
                     count = run_live(

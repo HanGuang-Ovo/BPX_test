@@ -60,8 +60,6 @@ class ActorController:
         q = cal.position_from_sdk(sample.q)
         dq = cal.velocity_from_sdk(sample.dq)
         gravity, angular = cal.imu(sample.quat_xyzw, sample.omega)
-        if np.arccos(np.clip(-gravity[2], -1, 1)) > self.config.safety["max_tilt_rad"]:
-            raise RuntimeError("机身倾角超限")
         if self.started_at is None:
             self.started_at = sample.host_time
             self.initial_target = q.copy()
@@ -108,7 +106,7 @@ class ActorController:
             raise RuntimeError("Actor 输出无效")
         blended = self.blender.update(output, self.config.period)
         target = cal.default + self.config.policy["action_scale"] * blended
-        # 第一条命令始终从实测姿态接入；逐周期接管和限速都作用于最终目标。
+        # 接管插值从实测姿态开始，不增加目标范围、限速或限矩处理。
         progress = np.clip((sample.host_time - self.started_at) / self.config.control["takeover_duration_s"], 0.0, 1.0)
         alpha = progress * progress * (3 - 2 * progress)
         target = self.initial_target + alpha * (target - self.initial_target)

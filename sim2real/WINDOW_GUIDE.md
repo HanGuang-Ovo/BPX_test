@@ -246,7 +246,7 @@ SDK q = 官方 q = 当前 q
 
 45 维单帧包含角速度、机体重力方向、速度指令、相对默认角的关节位置、关节速度和上一动作。当前 Actor 不使用基座线速度；Critic 的输入不是这个窗口加载模型时的输入。
 
-只推理自动选中的模型，并维护该模型的历史与上一原始 action。首帧填满历史，上一 action 初始为零；策略状态切换、断连、过期和调度明显卡顿时会重建相应历史。
+只推理自动选中的模型，并维护该模型的历史与上一原始 action。首帧填满历史，上一 action 初始为零；策略状态切换、断连和调度明显卡顿时会重建相应历史；反馈年龄仅用于诊断。
 
 **这是预览动作历史，不是机器人实际执行历史。** 所以它适合检查输入和数值，不能完整复现真机闭环策略轨迹。
 
@@ -295,9 +295,9 @@ SDK 目标 = sign × (策略 q − offset)
 | Stand | 手柄保持零或低输入时，选择 Stand，模型 command 恒为零 |
 | Walk | 持续输入超过进入阈值后，选择 Walk，使用限制变化率后的手柄输入 |
 | STOPPING | 松开摇杆并满足退出延时后，继续使用 Walk，逐步回到零 command；过渡结束后回 Stand |
-| 暂停 / 等待 | 无手柄、反馈过期、状态不适用或倾角超限，不显示当前策略目标 |
+| 暂停 / 等待 | 无手柄、缺失/无效反馈或状态不适用，不显示当前策略目标 |
 
-当前模板按 `max(abs(command)/command_limit)` 衡量输入强度：进入阈值 0.12、持续 0.15 s；退出阈值 0.05、持续 0.30 s；最短 Walk 时间 0.30 s，STOPPING 1.5 s。预览参数在 `[control]`，窗口使用简化路由及 command 限变化率。实机入口与 sim2sim 共用完整 Supervisor，另按实测速度连续稳定判定 STOPPING 完成，并支持 WAITING_INIT/INIT。窗口不执行这些验收、关节接管、动作混合或目标保护。
+当前模板按 `max(abs(command)/command_limit)` 衡量输入强度：进入阈值 0.12、持续 0.15 s；退出阈值 0.05、持续 0.30 s；最短 Walk 时间 0.30 s，STOPPING 1.5 s。预览参数在 `[control]`，窗口使用简化路由及 command 限变化率。实机入口使用相同 Stand/Walk/STOPPING 路由，按时间完成起身；不依赖高度、速度稳定或接地验收。窗口不执行起身、关节接管或动作混合。
 
 ![自动切换到 Walk 后的窗口截图](docs/window_guide/screenshots/03-walk.png)
 
@@ -510,7 +510,7 @@ SDK 本身不定义你的 Actor 的 action_scale。不要因为官方另一个�
 4. 本地 UDP 9873 是否被占用，防火墙和回程是否正常。
 5. SDK/固件兼容，以及该固件是否提供需要的状态和时间戳字段。
 
-不要把未上电、TCP 可达或重复读取旧缓存解释成已收到有效反馈。只读窗口不需要开启 `allow_motion`；把它改为 true 不能修复通信问题。
+不要把未上电、TCP 可达或重复读取旧缓存解释成已收到有效反馈。实机运动由 `run --live` 启动；只读窗口不发送运动命令。
 
 ### 11.2 q/dq 有值，但 action 和策略目标都是横线
 
@@ -527,7 +527,7 @@ SDK 本身不定义你的 Actor 的 action_scale。不要因为官方另一个�
 | 没有 ONNX Runtime | 确认使用 bpx-real 解释器及其安装依赖 |
 | 等待完整/新鲜反馈 | 检查 dq、四元数、角速度、更新标记和年龄；有 q 不代表其余字段完整 |
 | 等待两次更新 | 等待新标记；若一直不满足，查反馈通道和固件支持 |
-| 数据已过期 / 组时间差过大 | 查实际卡顿和 UDP 更新，先定位原因，不直接放宽阈值 |
+| 灰色旧值 / 数据年龄增大 | 查实际卡顿和 UDP 更新；这些显示提示不阻塞实机控制 |
 | Actor 输出无效、NaN/Inf | 保存原始输入和模型信息，核对观测与模型，暂停运动部署 |
 
 查看当前文件和依赖：
@@ -608,7 +608,7 @@ python sim2real/run.py --config sim2real/config/local.runtime.toml analyze \
 
 窗口回放使用 **当前加载的配置和模型重新推理**，不是原样播放旧 `preview`。复现旧结果时保留原配置和模型，核对 SHA-256；旧 preview 可直接在 JSONL 中查看。
 
-旧的 inspect 录制如果不包含电脑手柄输入或运动状态年龄，窗口仍显示反馈和姿态，但不会猜测 command 或策略。新窗口录制可按已保存输入重新运行状态机。窗口保留大倾角姿态示意，但超过 `max_tilt_rad=0.45` 时暂停策略；严格 CLI 回放也有独立保护检查。
+旧 inspect 录制没有电脑手柄输入时只显示反馈和姿态。新窗口录制可按已保存输入重新运行状态机。大倾角不再暂停策略；窗口、回放和实机均使用有限数及四元数模长 [0.5,1.5] 检查。
 
 ### 12.3 每次问题记录最少保存什么
 
@@ -634,9 +634,9 @@ python sim2real/run.py --config sim2real/config/local.runtime.toml analyze \
 | 没有越界警告 | 当前目标没有触发配置模型范围检查 | 固件硬限矩、硬限速或实际安全范围正确 |
 | 录制回放可复现 | 已保存条件下的软件结果可核查 | 闭环运动性能已验证 |
 
-确认对齐后，才考虑在本机坐标文件中设置一次 `[alignment].verified=true`。不因为默认值相同或 DEMO 能运行，就把它当作通过。
+`alignment.verified` 仅记录用户对齐结果，不是实机启动条件。
 
-实际运动还需要独立确认增益、控制权接管、固件保护、限位与退出行为。详细部署条件见 [操作手册](OPERATION_GUIDE.md)。本窗口没有自动起身或运动停车功能。
+实机启动和退出阻尼说明见 [操作手册](OPERATION_GUIDE.md)。本窗口没有起身或运动停车功能。
 
 ## 14. 一页速查
 
@@ -664,7 +664,7 @@ python sim2real/run.py --config sim2real/config/local.runtime.toml analyze \
 | 电脑手柄读取 | [monitor_input.py](bpx_sim2real/monitor_input.py)、[公共手柄接口](../bpx_runtime/gamepad.py) |
 | 只读 Stand/Walk/STOPPING 预览路由 | [routing.py](../bpx_runtime/routing.py) |
 | SDK 缓存读取与年龄计算 | [sdk_robot.py](bpx_sim2real/sdk_robot.py) |
-| 状态和实际运动目标保护 | [safety.py](bpx_sim2real/safety.py) |
+| 有限数和四元数检查 | [safety.py](bpx_sim2real/safety.py) |
 | 已有策略顺序与默认角 | [公共关节定义](../bpx_runtime/joints.py) |
 | 官方 JointIndex/kJointNames | [本地 SDK 头文件](../bpx_sdk_open-master/include/motion_types.h) |
 | 官方关节控制示例 | [本地 SDK 示例](../bpx_sdk_open-master/example/joint_level_control_example.py) |

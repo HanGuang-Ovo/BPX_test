@@ -4,6 +4,7 @@ import numpy as np
 
 from bpx_runtime.math import rotation_body_to_world
 from .config import vector
+from .safety import quaternion_xyzw
 
 
 class Calibration:
@@ -32,9 +33,7 @@ class Calibration:
 
     def imu(self, quat_xyzw, omega):
         settings = self.config.calibration["imu"]
-        q = vector(quat_xyzw, 4, "IMU quaternion")
-        if not 0.9 <= np.linalg.norm(q) <= 1.1:
-            raise ValueError("IMU 四元数模长不在 [0.9,1.1]")
+        q = quaternion_xyzw(quat_xyzw)
         r_world_from_reported = rotation_body_to_world(q[[3, 0, 1, 2]])
         r_body_from_sensor = np.asarray(settings["sensor_to_body"]).reshape(3, 3)
         r_world_from_body = (r_world_from_reported @ r_body_from_sensor.T
@@ -42,4 +41,4 @@ class Calibration:
                              else r_world_from_reported)
         gravity = r_world_from_body.T @ np.array([0., 0., -1.])
         angular = r_body_from_sensor @ (vector(omega, 3, "IMU omega") - settings["gyro_bias"])
-        return gravity, angular
+        return vector(gravity, 3, "body gravity"), vector(angular, 3, "body angular velocity")

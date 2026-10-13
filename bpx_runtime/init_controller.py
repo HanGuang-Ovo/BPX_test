@@ -29,7 +29,7 @@ def quintic(progress: float) -> float:
 
 
 class LegKinematics:
-    def __init__(self, names, offsets, upper, lower, limits):
+    def __init__(self, names, offsets, upper, lower, limits=None):
         self.indices = np.array([
             [names.index(f"{leg}_{joint}_joint") for joint in ("hip_roll", "hip_pitch", "knee")]
             for leg in ("fl", "fr", "hl", "hr")
@@ -37,11 +37,13 @@ class LegKinematics:
         self.offsets = np.asarray(offsets, dtype=float)
         self.upper = np.broadcast_to(upper, (4,)).astype(float)
         self.lower = np.broadcast_to(lower, (4,)).astype(float)
-        self.limits = np.asarray(limits, dtype=float)
-        if (self.offsets.shape != (4,) or self.limits.shape != (12, 2)
-                or not all(np.isfinite(x).all() for x in (self.offsets, self.upper, self.lower, self.limits))
+        self.limits = None if limits is None else np.asarray(limits, dtype=float)
+        if (self.offsets.shape != (4,)
+                or not all(np.isfinite(x).all() for x in (self.offsets, self.upper, self.lower))
                 or np.any(self.upper <= 0) or np.any(self.lower <= 0)
-                or np.any(self.limits[:, 0] >= self.limits[:, 1])):
+                or (self.limits is not None and (self.limits.shape != (12, 2)
+                    or not np.isfinite(self.limits).all()
+                    or np.any(self.limits[:, 0] >= self.limits[:, 1])))):
             raise ValueError("Init 几何与限位无效")
 
     def forward(self, joint_position: np.ndarray) -> np.ndarray:
@@ -69,7 +71,8 @@ class LegKinematics:
                                                     self.upper + self.lower * np.cos(knee))
         result = np.empty(12)
         result[self.indices] = np.column_stack((roll, pitch, knee))
-        if np.any(result < self.limits[:, 0] - 1e-7) or np.any(result > self.limits[:, 1] + 1e-7):
+        if self.limits is not None and (np.any(result < self.limits[:, 0] - 1e-7)
+                                      or np.any(result > self.limits[:, 1] + 1e-7)):
             raise ValueError("Init IK 目标超过关节限位")
         return result
 

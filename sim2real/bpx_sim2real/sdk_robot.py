@@ -3,6 +3,7 @@
 import time
 
 from .config import vector
+from .safety import quaternion_xyzw
 from .state import Sample
 
 
@@ -24,6 +25,7 @@ class SDKSource:
         self.updated_at = {}
         self.identity = {}
         self.command_started = False
+        self.last_position = None
 
     def __enter__(self):
         net = self.config.network
@@ -69,10 +71,6 @@ class SDKSource:
         if token is None:
             return None
         if name not in self.tokens or token != self.tokens[name]:
-            if name in self.tokens and token < self.tokens[name]:
-                # 控制时保守处理回退/回绕，避免把重启当作同一控制会话。
-                if self.joint_control:
-                    raise RuntimeError(f"{name} 序列号/时间戳回退；需重新检查并使能")
             self.tokens[name] = token
             self.updated_at[name] = now
         return max(0.0, now - self.updated_at[name])
@@ -134,6 +132,10 @@ class SDKSource:
         q, dq, torque, quat, omega, acc, velocity = [
             vector(value, width, "SDK feedback").tolist() if value is not None else None for value, width in arrays
         ]
+        if quat is not None:
+            quaternion_xyzw(quat)
+        if q is not None:
+            self.last_position = q.copy()
         # host_time 是本次读缓存时间，新鲜度是主机首次观察到 token 变化的时间。
         now = self.clock()
         joint_age = self._age("joint", joint_token, now) if q is not None and dq is not None else None
@@ -155,6 +157,9 @@ class SDKSource:
             "motor_temperature": r.getMotorTemperature(),
             "driver_temperature": r.getDriverTemperature(),
         }
+        for key in ("motor_temperature", "driver_temperature"):
+            if telemetry[key] is not None:
+                telemetry[key] = vector(telemetry[key], 12, key).tolist()
         if self.joint_control:
             telemetry["high_rate_timestamp"] = high_timestamp
         return Sample(
@@ -199,10 +204,16 @@ class SDKSource:
     def __exit__(self, exc_type, exc, tb):
         try:
             if self.joint_control and self.command_started:
-                if not self.robot.isConnected():
-                    raise RuntimeError("无法发送退出清零命令：TCP 断开，依赖已确认的机器人看门狗")
-                if not self.robot.setZeroJointCommand():
-                    raise RuntimeError("机器人未接受退出清零命令，需现场执行停止")
+                # best effort：退出动作失败不覆盖原始异常，也不自动重连。
+                for _ in range(3):
+                    try:
+                        if not self.robot.isConnected():
+                            break
+                        pos = self.last_position if self.last_position is not None else [0.] * 12
+                        self.robot.setJointCommand([0.] * 12, pos, [1.] * 12,
+                                                   [0.] * 12, [0.] * 12)
+                    except Exception:
+                        pass
         finally:
             self.robot.disconnect()
         return False
