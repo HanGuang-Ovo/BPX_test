@@ -18,7 +18,6 @@ from bpx_sim2real.config import load_config
 from bpx_sim2real.runner import run_live
 from bpx_sim2real.safety import StateGuard
 from bpx_runtime.gamepad import (GamepadCommandSource, InputDevice, BTN_TR, EVENT_STRUCT, EV_KEY)
-from bpx_runtime.supervisor import BehaviorMode, BehaviorSupervisor, SupervisorState
 
 
 def supported_sample(cfg, q, t=0., token=1, *, supported=True):
@@ -63,7 +62,7 @@ class HardwareBehaviorTest(unittest.TestCase):
                     raw = sign * np.array([5., -2., 3.])
                     limits = np.asarray(cfg.control["command_limit"])
                     path = Path(tmp) / "live.jsonl"
-                    run_live(cfg, path, (0., 0., 0.) if dynamic else raw, 2., armed=True,
+                    run_live(cfg, path, (0., 0., 0.) if dynamic else raw, 2.,
                              policies=policies, source_factory=lambda *a, **k: source,
                              clock=clock.now, sleep=clock.sleep,
                              command_source=(lambda: raw) if dynamic else None)
@@ -84,7 +83,7 @@ class HardwareBehaviorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "live.jsonl"
             policies = {"walk": Policy(0.), "stand": Policy(0.)}
-            run_live(cfg, path, (0, 0, 0), duration, armed=True, policies=policies,
+            run_live(cfg, path, (0, 0, 0), duration, policies=policies,
                      source_factory=lambda *a, **k: source, clock=clock.now, sleep=clock.sleep,
                      command_source=command_source, init_request_source=request)
             return [row for line in path.read_text().splitlines()

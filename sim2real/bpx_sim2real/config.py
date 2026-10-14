@@ -3,6 +3,7 @@
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import math
+import sys
 import tomllib
 
 import numpy as np
@@ -11,6 +12,10 @@ from bpx_runtime.joints import POLICY_JOINT_NAMES, SDK_JOINT_NAMES, DEFAULT_JOIN
 
 # 仅用于窗口中的官方模型范围对照，不限制实机接管或发送目标。
 OFFICIAL_JOINT_LIMITS = ((-.8727, .8727),) * 4 + ((-.7854, 2.60661),) * 4 + ((-2.7531, -.5539),) * 4
+
+DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "config/runtime.toml"
+if not DEFAULT_CONFIG.is_file():
+    DEFAULT_CONFIG = Path(sys.prefix) / "share/bpx-deployment/config/runtime.toml"
 
 
 def vector(value, size, name, *, positive=False):

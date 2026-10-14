@@ -1,4 +1,22 @@
-# BPX sim2real：官方 SDK 反馈与策略对齐
+# BPX sim2real：实机部署与独立调试工具
+
+部署代码和调试工具分别放在两个包中。实机起身、Stand/Walk/STOPPING、策略推理与 SDK 收发在 `bpx_sim2real/`；只读窗口、诊断、状态采集和离线回放在 `tools/bpx_sim2real_tools/`。
+
+```text
+sim2real/
+├── run.py                         # 部署入口：check / run
+├── bpx_sim2real/                   # 起身、策略控制、SDK、坐标和配置
+├── visualize.py                   # 只读窗口快捷入口
+├── tools/
+│   ├── run.py                     # 调试入口：monitor / inspect / analyze / replay
+│   └── bpx_sim2real_tools/         # 窗口、诊断、采集与回放实现
+├── config/                        # 共用的运行与坐标配置
+└── tests/                         # 模拟 SDK、控制流程和工具边界回归
+```
+
+工具复用部署的坐标、状态和 Actor；部署运行时不加载工具包或 Tkinter。部署日志与调试录制共用 `bpx_runtime/jsonl.py` 写入器，录制读取、重采样、统计和回放只属于工具包。
+
+建议使用 `python sim2real/tools/run.py ...` 或安装后的 `bpx-real-tools ...` 运行工具。原有 `python sim2real/run.py monitor/inspect/analyze/replay ...` 命令仍按需转发，`python sim2real/visualize.py ...` 保持可用。重构后重新执行 `python -m pip install -e '.[inference]'`，更新 `bpx-monitor` 和新增的工具入口。
 
 通过官方 SDK 读取 BPX 状态，在可视化窗口中对照 12 个关节的反馈、Stand/Walk 策略输出和四元数解算姿态。先确认数据和坐标对应关系，再准备实机接管。
 
@@ -8,6 +26,7 @@
 
 | 文档 | 适合什么时候阅读 |
 | --- | --- |
+| [文件结构与职责说明](FILE_STRUCTURE.md) | 查看每个文件的用途、部署与工具边界，以及起身、策略推理和 SDK 收发的调用关系 |
 | [窗口图解使用与问题分析](WINDOW_GUIDE.md) | 看懂每一列、三个 q、姿态、曲线和参数页，按现象排错 |
 | [操作手册](OPERATION_GUIDE.md) | 逐步安装、联网、初始化、录制、回放和准备实机接管 |
 | [硬件接入说明](HARDWARE_SETUP.md) | 查看连接和回读记录 |
@@ -77,10 +96,10 @@ python sim2real/visualize.py --demo
 python sim2real/visualize.py --demo --no-policy
 ```
 
-统一 CLI 提供同一窗口。CLI 默认使用模板，使用本机配置时显式传入 `--config`：
+独立工具 CLI 提供同一窗口。工具 CLI 默认使用模板，使用本机配置时显式传入 `--config`：
 
 ```bash
-python sim2real/run.py --config sim2real/config/local.runtime.toml monitor
+python sim2real/tools/run.py --config sim2real/config/local.runtime.toml monitor
 ```
 
 安装本项目后也可使用 `bpx-monitor`；新增入口需重新执行可编辑安装。
@@ -196,7 +215,7 @@ python sim2real/visualize.py --output outputs/sim2real/monitor-01.jsonl
 python sim2real/visualize.py --recording outputs/sim2real/monitor-01.jsonl
 
 # 分析原始反馈统计
-python sim2real/run.py --config sim2real/config/local.runtime.toml analyze \
+python sim2real/tools/run.py --config sim2real/config/local.runtime.toml analyze \
   outputs/sim2real/monitor-01.jsonl
 ```
 
@@ -215,11 +234,11 @@ python sim2real/run.py --config sim2real/config/local.runtime.toml run \
   --live --gamepad-index 0
 ```
 
-日志自动创建，也可显式指定 `--output`；不再要求 `--arm` 或 `allow_motion`。等待实测姿态时按 RB/R1 起身，4 秒足端轨迹结束后进入 Stand，摇杆进入 Walk，松杆通过 STOPPING 回 Stand。起身继续采用 BPX 五次足端轨迹和解析 IK；实机行为不再使用仿真的高度/接地/跌倒 Supervisor。详细说明见 [操作手册](OPERATION_GUIDE.md#6-实机运动)。
+日志自动创建，也可显式指定 `--output`；由 `--live` 选择实机执行，旧 `--arm` 参数已删除。等待实测姿态时按 RB/R1 起身，4 秒足端轨迹结束后进入 Stand，摇杆进入 Walk，松杆通过 STOPPING 回 Stand。起身继续采用 BPX 五次足端轨迹和解析 IK；实机行为不再使用仿真的高度/接地/跌倒 Supervisor。详细说明见 [操作手册](OPERATION_GUIDE.md#6-实机运动)。
 
 退出尝试阻尼并断开，阻尼命令不保证送达。只读窗口始终不发送运动或退出阻尼命令。
 
-CLI 提供 `check`、`monitor`、`inspect`、`analyze`、`replay` 和 `run`；`replay --enforce-limits` 已移除。
+部署 CLI 提供 `check` 和 `run`；独立工具 CLI 提供 `monitor`、`inspect`、`analyze` 和 `replay`，部署 CLI 仅保留这些工具命令的转发入口。
 
 ## 软件验证
 
@@ -227,7 +246,7 @@ CLI 提供 `check`、`monitor`、`inspect`、`analyze`、`replay` 和 `run`；`r
 python -m unittest discover -s sim2real/tests -p 'test_*.py' -v
 ```
 
-测试使用模拟 SDK、时钟和策略，验证有限数/四元数、退出阻尼、取消旧门槛及状态切换，并包含本地 ONNX 加载测试。
+测试使用模拟 SDK、时钟和策略，验证有限数/四元数、退出阻尼、取消旧门槛及完整起身状态切换，并包含部署不加载工具/窗口、新旧工具入口一致性和本地 ONNX 加载及回放测试。
 
 ## 官方依据
 

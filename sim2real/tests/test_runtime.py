@@ -16,17 +16,19 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sim2real"))
+sys.path.insert(0, str(ROOT / "sim2real/tools"))
 sys.path.insert(0, str(ROOT))
 
 from bpx_runtime.history import ObservationHistory
 from bpx_runtime.joints import DEFAULT_JOINT_POSITION
-from bpx_runtime.supervisor import BehaviorMode, SupervisorDecision
+from bpx_runtime.jsonl import JsonlWriter
 from bpx_sim2real.calibration import Calibration
 from bpx_sim2real.cli import main
 from bpx_sim2real.config import load_config
 from bpx_sim2real.controller import ActorController
-from bpx_sim2real.recording import JsonlWriter, load_samples, resample
-from bpx_sim2real.runner import replay, run_live
+from bpx_sim2real_tools.recording import load_samples, resample
+from bpx_sim2real.runner import run_live
+from bpx_sim2real_tools.replay import replay
 from bpx_sim2real.safety import StateGuard
 from bpx_sim2real.sdk_robot import SDKSource
 from bpx_sim2real.state import Sample
@@ -171,7 +173,7 @@ class RuntimeTest(unittest.TestCase):
                               session=99, identity={}, source="ordinary", joint_age_s=100.,
                               imu_age_s=None, odom_token=None, odom_position=None,
                               velocity_body=None)
-            guard.check(altered, now=1000., hardware=True)
+            guard.check(altered)
             gravity, _ = Calibration(cfg).imu(altered.quat_xyzw, altered.omega)
             np.testing.assert_allclose(gravity, [0,0,-1])
 
@@ -217,32 +219,6 @@ class RuntimeTest(unittest.TestCase):
         controller.commit_target(target)
         controller.step(sample(cfg, t=0.02, token=2), (0, 0, 0))
         np.testing.assert_allclose(policy.observations[-1][-12:], 0.06, atol=1e-7)
-
-    def test_actor_bounds_external_supervisor_command_before_observation(self):
-        cfg = config()
-        limits = np.asarray(cfg.control["command_limit"])
-        for sign in (1., -1.):
-            with self.subTest(sign=sign):
-                policy = Policy(0.)
-                controller = ActorController(cfg, policies={"walk": policy, "stand": policy})
-                raw = sign * np.array([5., -2., 3.])
-                decision = SupervisorDecision(BehaviorMode.WALK, raw, True, "test")
-                result = controller.step(sample(cfg), raw, decision=decision)
-                expected = np.clip(raw, -limits, limits)
-                np.testing.assert_allclose(result["command"], expected)
-                commands = policy.observations[-1][60:90].reshape(10, 3)
-                np.testing.assert_allclose(commands, np.tile(expected, (10, 1)))
-
-    def test_actor_rejects_invalid_supervisor_command_before_clipping(self):
-        cfg = config()
-        for command in ([np.inf, 0., 0.], [np.nan, 0., 0.], [1., 2.]):
-            with self.subTest(command=command):
-                policy = Policy(0.)
-                controller = ActorController(cfg, policies={"walk": policy, "stand": policy})
-                decision = SupervisorDecision(BehaviorMode.WALK, np.asarray(command), True, "test")
-                with self.assertRaises(ValueError):
-                    controller.step(sample(cfg), (0., 0., 0.), decision=decision)
-                self.assertEqual(policy.observations, [])
 
     def test_replay_resampling_has_no_future_state_and_increases_age(self):
         cfg = config()
@@ -297,7 +273,6 @@ class RuntimeTest(unittest.TestCase):
                 Path(tmp) / "log.jsonl",
                 (0, 0, 0),
                 0.1,
-                armed=True,
                 policies={"walk": policy, "stand": policy},
                 source_factory=lambda *a, **k: source,
                 clock=clock.now,
@@ -318,7 +293,6 @@ class RuntimeTest(unittest.TestCase):
                 Path(tmp) / "log.jsonl",
                 (0, 0, 0),
                 0.2,
-                armed=True,
                 policies={"walk": policy, "stand": policy},
                 source_factory=lambda *a, **k: source,
                 clock=clock.now,

@@ -150,9 +150,9 @@ python sim2real/visualize.py --output outputs/sim2real/monitor-01.jsonl
 也可使用无窗口采集：
 
 ```bash
-python sim2real/run.py --config sim2real/config/local.runtime.toml inspect \
+python sim2real/tools/run.py --config sim2real/config/local.runtime.toml inspect \
   --duration 10 --output outputs/sim2real/state-01.jsonl
-python sim2real/run.py --config sim2real/config/local.runtime.toml analyze \
+python sim2real/tools/run.py --config sim2real/config/local.runtime.toml analyze \
   outputs/sim2real/state-01.jsonl
 ```
 
@@ -165,7 +165,7 @@ python sim2real/visualize.py --recording outputs/sim2real/state-01.jsonl
 播放结束停用最后一帧的预览。CLI 的严格离线策略回放：
 
 ```bash
-python sim2real/run.py --config sim2real/config/local.runtime.toml replay \
+python sim2real/tools/run.py --config sim2real/config/local.runtime.toml replay \
   outputs/sim2real/state-01.jsonl --output outputs/sim2real/policy-01.jsonl
 ```
 
@@ -195,7 +195,7 @@ python sim2real/run.py --config sim2real/config/local.runtime.toml run \
   --live --gamepad-index 0
 ```
 
-省略 `--output` 时自动在 `outputs/sim2real` 创建带上海时间戳的 JSONL；也可指定新文件名。`--arm` 仅兼容旧命令，不再要求。
+省略 `--output` 时自动在 `outputs/sim2real` 创建带上海时间戳的 JSONL；也可指定新文件名。由 `--live` 选择实机执行，旧 `--arm` 参数已删除。
 
 ```text
 固件 Motion=6 → STAND

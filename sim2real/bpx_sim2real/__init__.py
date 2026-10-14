@@ -1,4 +1,4 @@
-"""BPX 实机只读对齐、回放和策略控制。SDK 仅在硬件入口中加载。"""
+"""BPX 实机部署：SDK、坐标转换、起身和策略控制。"""
 
 import sys
 from pathlib import Path

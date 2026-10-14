@@ -14,11 +14,12 @@ inference = ["onnxruntime>=1.16"]
 
 [project.scripts]
 bpx-real = "bpx_sim2real.cli:main"
-bpx-monitor = "bpx_sim2real.monitor:main"
+bpx-monitor = "bpx_sim2real_tools.monitor:main"
+bpx-real-tools = "bpx_sim2real_tools.cli:main"
 
 [tool.setuptools]
-packages = ["bpx_runtime", "bpx_sim2real"]
-package-dir = {bpx_sim2real = "sim2real/bpx_sim2real"}
+packages = ["bpx_runtime", "bpx_sim2real", "bpx_sim2real_tools"]
+package-dir = {bpx_sim2real = "sim2real/bpx_sim2real", bpx_sim2real_tools = "sim2real/tools/bpx_sim2real_tools"}
 
 [tool.setuptools.data-files]
 "share/bpx-deployment/config" = ["sim2real/config/runtime.toml", "sim2real/config/joint_calibration.template.toml"]

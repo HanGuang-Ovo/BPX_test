@@ -55,7 +55,7 @@ class ActorController:
                 self.blender.start(self.last_action)
         return filtered
 
-    def step(self, sample, command, *, decision=None):
+    def step(self, sample, command):
         cal = self.calibration
         q = cal.position_from_sdk(sample.q)
         dq = cal.velocity_from_sdk(sample.dq)
@@ -70,21 +70,7 @@ class ActorController:
             raise ValueError("command 必须为三个有限值")
         command_limit = np.asarray(self.config.control["command_limit"])
         command = np.clip(command, -command_limit, command_limit)
-        if decision is None:
-            filtered = self._route(command)
-        else:
-            filtered = np.asarray(decision.command, dtype=float)
-            if filtered.shape != (3,) or not np.isfinite(filtered).all():
-                raise ValueError("supervisor command 必须为三个有限值")
-            # 外部 decision 也必须遵守 Actor 的最终 command 范围。
-            filtered = np.clip(filtered, -command_limit, command_limit)
-            old_mode = self.mode
-            self.mode = decision.mode.value
-            if self.mode != old_mode:
-                if self.mode == "stand":
-                    self.stand_history = None
-                if (old_mode == "stand") != (self.mode == "stand"):
-                    self.blender.start(self.last_action)
+        filtered = self._route(command)
         linear = sample.velocity_body if self.config.policy["include_base_lin_vel"] else None
         frame = actor_frame(angular, gravity, filtered, q, dq, self.last_action, cal.default, linear)
         walk_input = self.walk_history.append(frame)

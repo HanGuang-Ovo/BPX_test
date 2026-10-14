@@ -37,8 +37,8 @@ class Calibration:
         r_world_from_reported = rotation_body_to_world(q[[3, 0, 1, 2]])
         r_body_from_sensor = np.asarray(settings["sensor_to_body"]).reshape(3, 3)
         r_world_from_body = (r_world_from_reported @ r_body_from_sensor.T
-                             if settings["quaternion_frame"] == "sensor_to_world"
-                             else r_world_from_reported)
+                            if settings["quaternion_frame"] == "sensor_to_world"
+                            else r_world_from_reported)
         gravity = r_world_from_body.T @ np.array([0., 0., -1.])
         angular = r_body_from_sensor @ (vector(omega, 3, "IMU omega") - settings["gyro_bias"])
         return vector(gravity, 3, "body gravity"), vector(angular, 3, "body angular velocity")

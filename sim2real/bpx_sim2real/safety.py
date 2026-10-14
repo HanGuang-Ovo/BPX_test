@@ -22,7 +22,7 @@ class StateGuard:
     def __init__(self, config):
         self.config = config
 
-    def check(self, sample, now=None, *, require_imu=True, hardware=False, require_odometry=False):
+    def check(self, sample, *, require_imu=True, require_odometry=False):
         if not np.isfinite(sample.host_time):
             raise ValueError("反馈主机时间必须为有限数")
         vector(sample.q, 12, "joint position")

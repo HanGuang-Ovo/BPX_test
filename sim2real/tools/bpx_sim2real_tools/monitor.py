@@ -11,11 +11,13 @@ import time
 import numpy as np
 
 from bpx_runtime.joints import SDK_JOINT_NAMES
-from .config import load_config, positive
+from bpx_sim2real.config import load_config, positive
 from .diagnostics import PolicyPreview, build_snapshot, demo_sample
-from .recording import JsonlWriter, load_samples, resample
-from .sdk_robot import SDKSource
+from bpx_runtime.jsonl import JsonlWriter
+from .recording import load_samples, resample
+from bpx_sim2real.sdk_robot import SDKSource
 from .monitor_input import MonitorGamepad
+from .cli import add_gamepad_arguments, list_gamepads
 
 
 class MonitorWorker(threading.Thread):
@@ -983,7 +985,7 @@ def launch(
 
 
 def main(argv=None):
-    from .cli import DEFAULT_CONFIG
+    from bpx_sim2real.config import DEFAULT_CONFIG
 
     local = DEFAULT_CONFIG.with_name("local.runtime.toml")
     parser = argparse.ArgumentParser(description="BPX 只读反馈、策略输出与姿态对齐窗口")
@@ -1010,21 +1012,3 @@ def main(argv=None):
         )
     except (ValueError, RuntimeError, OSError) as exc:
         parser.exit(2, f"ERROR: {exc}\n")
-
-
-def add_gamepad_arguments(parser):
-    selector = parser.add_mutually_exclusive_group()
-    selector.add_argument("--gamepad-device", type=Path, help="只读手柄设备，例如 /dev/input/eventN")
-    selector.add_argument("--gamepad-index", type=int, help="多个手柄时指定列表索引")
-    parser.add_argument("--list-gamepads", action="store_true", help="列出电脑手柄，不连接机器人或打开窗口")
-
-
-def list_gamepads():
-    from bpx_runtime.gamepad import enumerate_gamepads
-
-    devices = enumerate_gamepads()
-    for index, device in enumerate(devices):
-        print(f"[{index}] {device.label}")
-    if not devices:
-        print("没有找到电脑 USB/蓝牙手柄")
-    return 0

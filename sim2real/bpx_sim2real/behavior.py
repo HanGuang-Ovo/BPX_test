@@ -100,15 +100,15 @@ class HardwareController:
         desired_kp = np.full(12, init.stiffness) if self.mode == "init" else np.asarray(self.config.control["kp"])
         desired_kd = np.full(12, init.damping) if self.mode == "init" else np.asarray(self.config.control["kd"])
         alpha = (1. if self.gain_started_at is None else
-                 quintic((now - self.gain_started_at) / self.config.control["action_blend_duration_s"]))
+                quintic((now - self.gain_started_at) / self.config.control["action_blend_duration_s"]))
         self.kp = self.gain_start[0] + alpha * (desired_kp - self.gain_start[0])
         self.kd = self.gain_start[1] + alpha * (desired_kd - self.gain_start[1])
         self.result.update(mode=self.mode, target_model=vector(self.target, 12, "target").tolist(),
-                           reason="waiting_for_RB" if self.mode == "waiting_init" else
-                                  "timed_foot_trajectory" if self.mode == "init" else "policy_router",
-                           init_phase=self.trajectory.phase if self.mode == "init" else "",
-                           init_progress=self.trajectory.progress if self.mode == "init" else 0.,
-                           init_requested=bool(init_requested))
+                            reason="waiting_for_RB" if self.mode == "waiting_init" else
+                                    "timed_foot_trajectory" if self.mode == "init" else "policy_router",
+                            init_phase=self.trajectory.phase if self.mode == "init" else "",
+                            init_progress=self.trajectory.progress if self.mode == "init" else 0.,
+                            init_requested=bool(init_requested))
         return self.result
 
     def commit_target(self, target):

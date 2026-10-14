@@ -602,7 +602,7 @@ python sim2real/visualize.py \
   --recording outputs/sim2real/monitor-01.jsonl
 
 # 分析原始反馈统计，不分析 preview 的闭环性能。
-python sim2real/run.py --config sim2real/config/local.runtime.toml analyze \
+python sim2real/tools/run.py --config sim2real/config/local.runtime.toml analyze \
   outputs/sim2real/monitor-01.jsonl
 ```
 

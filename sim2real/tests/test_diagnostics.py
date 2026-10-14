@@ -16,13 +16,14 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sim2real"))
+sys.path.insert(0, str(ROOT / "sim2real/tools"))
 sys.path.insert(0, str(ROOT))
 
 from bpx_sim2real.config import load_config
-from bpx_sim2real.diagnostics import attitude, build_snapshot, demo_sample, PolicyPreview
-from bpx_sim2real.monitor import MonitorWindow, MonitorWorker, leg_points
+from bpx_sim2real_tools.diagnostics import attitude, build_snapshot, demo_sample, PolicyPreview
+from bpx_sim2real_tools.monitor import MonitorWindow, MonitorWorker, leg_points
 from bpx_sim2real.sdk_robot import SDKSource
-from bpx_sim2real.monitor_input import MonitorGamepad
+from bpx_sim2real_tools.monitor_input import MonitorGamepad
 from bpx_sim2real.controller import ActorController
 
 
@@ -328,7 +329,7 @@ class TestDiagnostics(unittest.TestCase):
                 worker.join(timeout=2)
             factory.assert_not_called()
             gamepad_factory.assert_not_called()
-            from bpx_sim2real.recording import load_samples
+            from bpx_sim2real_tools.recording import load_samples
 
             metadata, samples = load_samples(output)
             self.assertEqual(metadata["source"], "demo")
@@ -336,7 +337,7 @@ class TestDiagnostics(unittest.TestCase):
             self.assertEqual(samples[0].telemetry["remote_command"], [0, 0, 0])
 
     def test_recording_replay_never_reads_current_gamepad(self):
-        from bpx_sim2real.recording import JsonlWriter
+        from bpx_runtime.jsonl import JsonlWriter
 
         with tempfile.TemporaryDirectory() as tmp:
             recording = Path(tmp) / "recording.jsonl"

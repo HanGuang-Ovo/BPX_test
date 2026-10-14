@@ -73,8 +73,10 @@ BPX_test/
 ├── bpx_runtime/                    # 仿真与实机共用的策略、关节和历史观测
 ├── sim2real/
 │   ├── visualize.py                # 只读反馈、策略预览和姿态窗口
-│   ├── run.py                      # 检查、采集、分析、回放和部署入口
-│   ├── bpx_sim2real/               # SDK 适配、坐标转换、窗口和实机执行
+│   ├── run.py                      # 检查和实机部署入口；兼容转发旧工具命令
+│   ├── bpx_sim2real/               # SDK 适配、坐标转换、起身和实机策略控制
+│   ├── tools/run.py                # 独立的窗口、采集、分析和回放入口
+│   ├── tools/bpx_sim2real_tools/   # 可视化、诊断与录制回放工具
 │   ├── config/                     # 模板及本机 runtime / 坐标配置
 │   ├── docs/window_guide/          # 窗口截图、标注图与 SVG 示意图
 │   ├── WINDOW_GUIDE.md             # 图解阅读与问题分析

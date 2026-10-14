@@ -10,10 +10,10 @@ from bpx_runtime.math import rotation_body_to_world
 from bpx_runtime.observation import actor_frame
 from bpx_runtime.policy import OnnxPolicy
 from bpx_runtime.routing import PolicyRouter
-from .calibration import Calibration
-from .config import vector
-from .safety import StateGuard, quaternion_xyzw
-from .state import Sample
+from bpx_sim2real.calibration import Calibration
+from bpx_sim2real.config import vector
+from bpx_sim2real.safety import StateGuard, quaternion_xyzw
+from bpx_sim2real.state import Sample
 
 
 def rotation_to_rpy(rotation):
