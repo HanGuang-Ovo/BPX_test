@@ -10,6 +10,20 @@
 import argparse
 import sys
 
+# Select the installed Warp before Isaac Sim adds its bundled extension paths.
+# Keep this compatibility setup limited to the stair task.
+bootstrap_parser = argparse.ArgumentParser(add_help=False)
+bootstrap_parser.add_argument("--task")
+bootstrap_args, _ = bootstrap_parser.parse_known_args()
+if bootstrap_args.task in {"BPX-Stairs-Move-v0", "BPX-Stairs-Hold-v0"}:
+    import warp
+    import warp.types
+
+    for array_type in ("array", "indexedarray"):
+        if not hasattr(warp.types, array_type):
+            setattr(warp.types, array_type, getattr(warp, array_type))
+    print(f"[INFO] Stair runtime uses Warp {warp.__version__}")
+
 from isaaclab.app import AppLauncher
 
 # local imports
@@ -29,6 +43,13 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--finetune_checkpoint", type=str, default=None,
+    help="Load only compatible model weights into a fresh optimizer/run; mutually exclusive with --resume.",
+)
+parser.add_argument("--from_scratch", action="store_true", help="Disable the task's default weight initialization.")
+parser.add_argument("--move_checkpoint", type=str, default=None,
+                    help="Frozen Move actor used to generate Hold handoff states; does not initialize Hold weights.")
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
@@ -37,6 +58,10 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+if args_cli.finetune_checkpoint and args_cli.resume:
+    parser.error("--finetune_checkpoint and --resume are mutually exclusive")
+if args_cli.from_scratch and (args_cli.finetune_checkpoint or args_cli.resume):
+    parser.error("--from_scratch cannot be combined with --finetune_checkpoint or --resume")
 
 # always enable cameras to record video
 if args_cli.video:
@@ -114,6 +139,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     )
+    if args_cli.move_checkpoint:
+        if not getattr(env_cfg, "hold_policy_training", False):
+            raise ValueError("--move_checkpoint applies only to BPX-Stairs-Hold-v0")
+        env_cfg.move_checkpoint = os.path.abspath(os.path.expanduser(args_cli.move_checkpoint))
+    if getattr(env_cfg, "hold_policy_training", False) and args_cli.distributed:
+        raise ValueError("Masked Hold PPO currently supports single-device training")
+    finetune_checkpoint = args_cli.finetune_checkpoint
+    if not finetune_checkpoint and not agent_cfg.resume and not args_cli.from_scratch:
+        finetune_checkpoint = getattr(agent_cfg, "finetune_checkpoint", None)
+    if finetune_checkpoint:
+        if agent_cfg.resume or agent_cfg.algorithm.class_name != "PPO":
+            raise ValueError("Weights-only fine-tuning requires PPO and resume=False")
+        finetune_checkpoint = os.path.abspath(os.path.expanduser(finetune_checkpoint))
+        if not os.path.isfile(finetune_checkpoint):
+            raise FileNotFoundError(
+                f"Fine-tuning checkpoint does not exist: {finetune_checkpoint}. "
+                "Set --finetune_checkpoint to another model or use --from_scratch."
+            )
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
@@ -186,9 +229,30 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     # create runner from rsl-rl
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    runner_class = OnPolicyRunner
+    if getattr(env.unwrapped.cfg, "hold_policy_training", False):
+        from hold_ppo import HoldOnPolicyRunner
+
+        runner_class = HoldOnPolicyRunner
+    runner = runner_class(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
+    transfer_info = None
+    if finetune_checkpoint:
+        from finetune import load_finetune_weights
+
+        transfer_info = load_finetune_weights(
+            runner, finetune_checkpoint,
+            allow_critic_reset=getattr(agent_cfg, "finetune_allow_critic_reset", False),
+            reset_critic=getattr(agent_cfg, "finetune_reset_critic", False),
+            actor_input_adapter=getattr(agent_cfg, "finetune_actor_input_adapter", None),
+        )
+        print(f"[INFO]: Fine-tuning from model weights: {transfer_info['checkpoint']} (fresh optimizer/iteration 0)")
+        if transfer_info["actor_input_adapter"]:
+            print("[INFO]: Standing Actor adapted 48 -> 450: latest-frame weights retained; "
+                  "unavailable linear velocity fixed at zero; older-history weights initialized to zero.")
+        if transfer_info["critic_reset"]:
+            print("[INFO]: Keeping the newly initialized task Critic.")
     # load the checkpoint
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
@@ -200,12 +264,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
     dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
     dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
+    if transfer_info is not None:
+        dump_yaml(os.path.join(log_dir, "params", "initialization.yaml"), transfer_info)
 
     # Init 的观测信号由 episode 时间生成，必须从 phase=0 开始；否则随机起始步会让
     # 策略在还未收到“开始起身”的阶段信号时直接进入中途参考轨迹。
     init_at_random_ep_len = not (
         args_cli.task is not None and args_cli.task.lower().endswith("-init-v0")
-    )
+    ) and getattr(env_cfg, "randomize_initial_episode_length", True)
     runner.learn(
         num_learning_iterations=agent_cfg.max_iterations,
         init_at_random_ep_len=init_at_random_ep_len,

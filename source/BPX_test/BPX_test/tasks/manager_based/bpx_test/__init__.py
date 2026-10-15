@@ -8,12 +8,13 @@ import gymnasium as gym
 from . import agents
 
 
-def _register_bpx_task(task_id: str, env_cfg: str, runner_cfg: str) -> None:
+def _register_bpx_task(task_id: str, env_cfg: str, runner_cfg: str,
+                       entry_point: str = "isaaclab.envs:ManagerBasedRLEnv") -> None:
     """用统一入口注册一个 BPX ManagerBasedRLEnv 任务。"""
 
     gym.register(
         id=task_id,
-        entry_point="isaaclab.envs:ManagerBasedRLEnv",
+        entry_point=entry_point,
         disable_env_checker=True,
         kwargs={
             "env_cfg_entry_point": f"{__name__}.{env_cfg}",
@@ -62,4 +63,16 @@ _register_bpx_task(
     "BPX-Stand-Rough-v0",
     "bpx_rough_stand_env_cfg:BpxRoughStandEnvCfg",
     "bpx_rough_stand_ppo_cfg:BpxRoughStandPPORunnerCfg",
+)
+
+_register_bpx_task(
+    "BPX-Stairs-Move-v0",
+    "bpx_stairs_move_env_cfg:BpxStairsMoveEnvCfg",
+    "bpx_stairs_move_ppo_cfg:BpxStairsMovePPORunnerCfg",
+)
+_register_bpx_task(
+    "BPX-Stairs-Hold-v0",
+    "bpx_stairs_hold_env_cfg:BpxStairsHoldEnvCfg",
+    "bpx_stairs_hold_ppo_cfg:BpxStairsHoldPPORunnerCfg",
+    entry_point=f"{__name__}.stairs_hold_env:BpxStairsHoldEnv",
 )

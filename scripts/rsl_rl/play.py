@@ -10,6 +10,17 @@
 import argparse
 import sys
 
+bootstrap_parser = argparse.ArgumentParser(add_help=False)
+bootstrap_parser.add_argument("--task")
+bootstrap_args, _ = bootstrap_parser.parse_known_args()
+if bootstrap_args.task in {"BPX-Stairs-Move-v0", "BPX-Stairs-Hold-v0"}:
+    import warp
+    import warp.types
+
+    for array_type in ("array", "indexedarray"):
+        if not hasattr(warp.types, array_type):
+            setattr(warp.types, array_type, getattr(warp, array_type))
+
 from isaaclab.app import AppLauncher
 
 # local imports

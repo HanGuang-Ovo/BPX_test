@@ -25,6 +25,8 @@
 | `BPX-Locomotion-v0` | 平地前后、横向移动及偏航速度跟踪 | 20 秒 | 1500 | `logs/rsl_rl/bpx_locomotion/` |
 | `BPX-Locomotion-Rough-v0` | 平台复位、课程起伏地形上的盲走 | 20 秒（含边界截断） | 1500 | `logs/rsl_rl/bpx_rough/` |
 | `BPX-Locomotion-Rough-History-v0` | H=10 非对称观测历史的崎岖盲走 | 20 秒（含边界截断） | 1500 | `logs/rsl_rl/bpx_rough_history_asymmetric/` |
+| `BPX-Stairs-Move-v0` | 独立移动策略：起步、速度变化、连续上/下楼 | 楼梯 80 秒 / 平地 20 秒 | 4000 | `logs/rsl_rl/bpx_stairs_move/` |
+| `BPX-Stairs-Hold-v0` | 独立停驻策略：真实行走接管、制动和保持 | 预运行 + 2–4 秒保持，最长 80 秒 | 4000 | `logs/rsl_rl/bpx_stairs_hold/` |
 | `BPX-Stand-v0` | 零速度指令下保持稳定站姿 | 15 秒 | 1500 | `logs/rsl_rl/bpx_stand/` |
 | `BPX-Stand-Rough-v0` | 崎岖区域复位、站稳课程训练 | 15 秒 | 1500 | `logs/rsl_rl/bpx_rough_stand/` |
 | `BPX-Init-v0` | 从腹部朝地的趴卧状态起身并保持站立 | 4 秒 | 3000 | `logs/rsl_rl/bpx_init/` |
@@ -35,6 +37,8 @@
 Init 针对腹部朝地、机身接近水平的趴姿训练，不覆盖侧翻或仰翻后的翻身恢复。原有任务使用平地场景；新增 Rough 任务使用课程起伏地形。
 
 历史版本的训练、观测布局和部署步骤见 [H=10 使用说明](ROUGH_HISTORY_TRAINING.md)。Actor 使用 450 维观测，Critic 使用 480 维观测，只有 Critic 接收基座线速度真值；旧的 48 维或对称 480 维 Actor checkpoint 不能直接恢复到该任务。
+
+上下楼使用独立的 `BPX-Stairs-Move-v0` 和 `BPX-Stairs-Hold-v0`，分别训练连续通过与停车保持。两者共用 Actor 450 维 / Critic 528 维接口；Hold 使用冻结的 Move 生成真实交接状态，预运行步从 Hold PPO 更新中排除。配置、命令与验证步骤见[上下楼训练主文档](STAIRS_TRAINING.md)。
 
 ## 项目结构
 
@@ -106,7 +110,7 @@ python -m pip install -e source/BPX_test
 python scripts/list_envs.py
 ```
 
-`list_envs.py` 应列出上表中的七个任务。项目安装脚本不会自动安装完整的 Isaac Lab / Isaac Sim 运行环境；若使用 Isaac Lab 自带的启动脚本，可将命令中的 `python` 替换为 `/path/to/IsaacLab/isaaclab.sh -p`。
+`list_envs.py` 应列出上表中的九个任务。项目安装脚本不会自动安装完整的 Isaac Lab / Isaac Sim 运行环境；若使用 Isaac Lab 自带的启动脚本，可将命令中的 `python` 替换为 `/path/to/IsaacLab/isaaclab.sh -p`。
 
 **首次克隆后请检查机器人资产。** 训练需要 `source/BPX_test/BPX_test/BPX_structure/usd/bpx.usd` 及其引用的 USD 文件。仓库的 `.gitignore` 忽略了 USD 文件，因此仅克隆代码可能缺少这些资产。需要复制完整 USD 资产，或使用 Isaac Lab 的 URDF 转换工具，参照 [转换配置](source/BPX_test/BPX_test/BPX_structure/usd/config.yaml) 从 `BPX_structure/bpx/urdf/bpx.urdf` 重新生成；保留足端固定关节对应的独立刚体，并保持转换参数与训练配置一致。
 
