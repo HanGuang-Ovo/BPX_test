@@ -26,6 +26,7 @@ class BehaviorPolicies:
     stand: Policy | None = None
     init: Policy | None = None
     waiting: Policy | None = None
+    flat: Policy | None = None
 
     def resolve(self, mode: BehaviorMode) -> Policy:
         """返回某个行为真正应该执行的策略对象。"""

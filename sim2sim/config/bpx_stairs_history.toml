@@ -1,0 +1,178 @@
+# 此文件仅控制 MuJoCo 回放；从零训练的低台阶/方向课程见 STAIRS_TRAINING.md。
+# H=10 stair locomotion; change the policy paths below to switch trained runs.
+# Six 15 cm risers up, a 90 cm high landing, then six risers down.
+# Ordinary tread depth is 20 cm; lateral stair width remains 2 m.
+# PD init on flat ground, then STAND -> WALK uses the stair Actor (450 -> 12).
+# Term-major, oldest-to-newest; first frame fills history; updated at 50 Hz.
+[paths]
+# Walk 始终使用统一的 locomotion_policy；Supervisor 只负责 Init/Stand/STOPPING。
+# flat_policy 旧键仍可被配置解析器读取，但运行器不会再根据地形切换策略。
+mjcf = "source/BPX_test/BPX_test/BPX_structure/mjcf/bpx.xml"
+
+# Stand/Walk 使用 ONNX；Init 默认使用下方配置的足端轨迹 + PD。
+locomotion_policy = "logs/rsl_rl/bpx_stairs_history/2026-10-16_11-57-49_up_down_flat/exported/policy.onnx"
+
+stand_policy = "logs/rsl_rl/bpx_rough_stand/2026-09-20_13-01-51/exported/policy.onnx"
+# 旧 RL Init 路径仅供 mode="policy" 或 --init-policy 对照实验。
+
+init_policy = "logs/rsl_rl/bpx_init/2026-09-17_16-52-10_stable/exported/policy.onnx"
+# 保留 TorchScript 导出，供 --backend torchscript 和导出一致性检查使用。
+torchscript_policy = "logs/rsl_rl/bpx_stairs_history/2026-10-16_01-21-10/exported/policy.pt"
+
+[simulation]
+# 与训练日志 params/env.yaml 一致：200 Hz 物理仿真、50 Hz 策略。
+timestep = 0.005
+decimation = 4
+duration = 60.0
+realtime = true
+integrator = "euler"
+
+[control]
+# Isaac Lab JointPositionActionCfg 与 ImplicitActuatorCfg 的名义参数。
+mode = "explicit"
+action_scale = 0.5
+stiffness = 40.0
+damping = 1.0
+torque_limit = 30.0
+velocity_limit = 20.0
+
+# Init 专用参数；仅 MuJoCo 使用。4 秒为轨迹时长，站稳确认另计。
+[init_controller]
+mode = "pd"
+duration = 4.0
+support_duration = 1.0
+# 髋到 toe link 原点的竖直距离，不是机身离地高度。
+support_depth = 0.19
+standing_depth = 0.38
+stiffness = 80.0
+# 5 ms 显式 PD 下使用 2.0；3.0 在等待后起身时可能振荡。
+damping = 2.0
+torque_limit = 30.0
+joint_speed_limit = 2.0
+tracking_error_limit = 0.35
+timeout = 8.0
+
+[initial_state]
+# 趴卧起步，使用与训练配置相同的初始姿态：
+# 机身低位约 0.13 m，hip_pitch+knee ≈ -pi/2，小腿水平贴地、足端朝前。
+# 使用 --supervisor --gamepad 后按 RB，或用 --auto-init 触发起身。
+base_position = [0.0, 0.0, 0.13]
+base_quaternion_wxyz = [1.0, 0.0, 0.0, 0.0]
+joint_position = [
+    0.0, 0.0, 0.0, 0.0,
+    0.98, 0.98, 0.98, 0.98,
+    -2.62, -2.62, -2.62, -2.62,
+]
+# Policy action reference remains identical to training.
+default_joint_position = [
+    0.0, 0.0, 0.0, 0.0,
+    0.7, 0.7, 0.7, 0.7,
+    -1.4, -1.4, -1.4, -1.4,
+]
+
+[observation]
+# Actor only: [base_ang_vel(3), projected_gravity(3), command(3),
+#  joint_pos_rel(12), joint_vel_rel(12), last_action(12)]
+dimension = 450
+include_base_lin_vel = false
+action_dimension = 12
+history_length = 10
+
+[command]
+linear_x = 0.4
+linear_y = 0.0
+angular_z = 0.0
+
+[termination]
+minimum_base_height = 0.15
+maximum_tilt = 1.0
+
+[supervisor]
+# --- command 归一化与平滑 ---
+# 状态机先计算 max(abs(command) / command_scale)，得到无量纲 command 活跃度。
+# scale 使用策略训练时的三轴满量程，变化率顺序同样固定为 vx、vy、wz。
+command_scale = [1.0, 0.5, 1.0]
+# 单位分别为 m/s²、m/s²、rad/s²；用于避免手柄阶跃直接送进策略。
+command_slew_rate = [1.5, 1.0, 2.0]
+
+# --- STAND/WALK 迟滞与防抖 ---
+# 进入 WALK 的阈值高于退出阈值，中间区域保持当前状态，防止边界来回切换。
+walk_enter_threshold = 0.12
+walk_exit_threshold = 0.05
+# 条件必须连续成立这么久才转换，不响应单帧摇杆噪声。
+walk_enter_delay = 0.15
+walk_exit_delay = 0.30
+# 进入 WALK 后的最短驻留时间，避免刚进入便因为 command 波动退出。
+minimum_walk_time = 0.30
+
+# --- STOPPING 完成条件 ---
+# 机体平面线速度和三轴角速度模长都低于阈值，才开始累计稳定时间。
+stop_linear_speed = 0.05
+stop_angular_speed = 0.10
+stand_confirm_time = 0.20
+# 即使速度一直不满足条件，也不能永久停留在 STOPPING。
+stopping_timeout = 1.50
+
+# --- 未站立检测与 Init 起身 ---
+# 行走/站立时取消仅因倾角超限退出；低高度判定和 Init 姿态检查仍生效。
+terminate_on_tilt = false
+fall_base_height = 0.20
+fall_tilt = 0.70
+# Init 只覆盖腹部朝地、机身接近水平的趴卧状态；侧翻和仰翻不进入该策略。
+init_start_max_tilt = 0.35
+# 起身过程中超过该倾角立即停止 Init，防止失败策略持续驱动到完全翻倒。
+init_abort_tilt = 0.55
+# Init 起身完成阈值必须比跌倒阈值更严格，并连续满足 init_confirm_time。
+init_base_height = 0.36
+init_tilt = 0.25
+init_confirm_time = 0.50
+# Init policy 的三个 command 槽位在训练和部署中都保持为零。
+init_command_slots = [0.0, 0.0, 0.0]
+# --- 底层策略切换 ---
+# 策略对象变化时，用 smoothstep 从上一帧实际 action 混合到新策略 action。
+action_blend_duration = 0.30
+
+[robot]
+base_body_name = "torso"
+base_joint_name = "base_freejoint"
+floor_geom_name = "floor"
+# 明确记录策略顺序，避免依赖 MuJoCo qpos 或 actuator 的隐含排列。
+joint_names = [
+    "fl_hip_roll_joint",
+    "fr_hip_roll_joint",
+    "hl_hip_roll_joint",
+    "hr_hip_roll_joint",
+    "fl_hip_pitch_joint",
+    "fr_hip_pitch_joint",
+    "hl_hip_pitch_joint",
+    "hr_hip_pitch_joint",
+    "fl_knee_joint",
+    "fr_knee_joint",
+    "hl_knee_joint",
+    "hr_knee_joint",
+]
+
+[terrain]
+kind = "stairs"
+step_height = 0.15
+step_depth = 0.20
+step_count = 6
+stair_width = 2.0
+stair_start = 2.0
+landing_length = 2.0
+
+# 本体感知专家路由；不读取位置、地形标签、射线或仿真接触真值。
+# 低通后的 IMU 倾角或最大关节跟踪误差持续超阈值，才进入楼梯模式。
+[locomotion_routing]
+filter_time = 0.15
+enter_tilt = 0.14
+exit_tilt = 0.12
+enter_joint_error = 0.40
+# 退出使用全关节 RMS；单关节最大误差仍须低于 enter_joint_error。
+exit_joint_error = 0.22
+enter_duration = 0.20
+exit_duration = 2.0
+# 最近 2 秒至少 85% 的信号满足平稳条件，允许正常迈步的短暂峰值。
+exit_clear_fraction = 0.85
+minimum_stairs_time = 3.0
+startup_grace = 0.8

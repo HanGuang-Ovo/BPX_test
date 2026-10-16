@@ -63,3 +63,9 @@ _register_bpx_task(
     "bpx_rough_stand_env_cfg:BpxRoughStandEnvCfg",
     "bpx_rough_stand_ppo_cfg:BpxRoughStandPPORunnerCfg",
 )
+
+_register_bpx_task(
+    "BPX-Locomotion-Stairs-History-v0",
+    "bpx_stairs_history_env_cfg:BpxStairsHistoryEnvCfg",
+    "bpx_stairs_history_ppo_cfg:BpxStairsHistoryPPORunnerCfg",
+)

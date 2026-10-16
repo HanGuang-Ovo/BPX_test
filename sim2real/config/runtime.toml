@@ -11,7 +11,7 @@ connect_timeout_s = 5.0
 
 [policy]
 walk_model = "../../logs/rsl_rl/bpx_rough_history_asymmetric/2026-09-23_11-17-22/exported/policy.onnx"
-stand_model = "../../logs/rsl_rl/bpx_rough_stand/2026-09-24_08-51-56_stable/exported/policy.onnx"
+stand_model = "../../logs/rsl_rl/bpx_rough_stand/2026-09-24_08-51-56/exported/policy.onnx"
 history_length = 10
 include_base_lin_vel = false
 observation_dimension = 450

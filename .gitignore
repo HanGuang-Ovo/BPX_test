@@ -61,6 +61,9 @@ _build
 # Pre-Trained Checkpoints
 /.pretrained_checkpoints/
 
+# 固定版本训练依赖源码（由 install_training_deps.sh --full 下载）
+/.deps/
+
 # Teleop Recorded Dataset
 datasets
 

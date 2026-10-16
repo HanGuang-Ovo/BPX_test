@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 import tomllib
 
+from .locomotion_router import ProprioceptionRoutingConfig
 from bpx_runtime.supervisor import SupervisorConfig
 from bpx_runtime.init_controller import InitControllerConfig
 
@@ -25,6 +26,7 @@ class PathConfig:
     locomotion_policy: Path
     stand_policy: Path | None
     init_policy: Path | None
+    flat_policy: Path | None = None
 
     @property
     def onnx_policy(self) -> Path:
@@ -102,6 +104,12 @@ class TerminationConfig:
 class TerrainConfig:
     kind: str = "flat"
     seed: int = 20260918
+    step_height: float = 0.15
+    step_depth: float = 0.20
+    step_count: int = 6
+    stair_width: float = 2.0
+    stair_start: float = 2.0
+    landing_length: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -120,6 +128,9 @@ class Sim2SimConfig:
     base_joint_name: str
     floor_geom_name: str
     terrain: TerrainConfig = TerrainConfig()
+    # Kept for TOML compatibility; unified locomotion no longer uses terrain
+    # routing to select a second policy.
+    locomotion_routing: ProprioceptionRoutingConfig = ProprioceptionRoutingConfig()
     init_controller: InitControllerConfig = InitControllerConfig()
 
 
@@ -190,6 +201,7 @@ def load_config(path: str | Path, repository_root: str | Path | None = None) -> 
                 paths.get("locomotion_policy", paths.get("onnx_policy")),
                 "paths.locomotion_policy",
             ),
+            flat_policy=_resolve_optional_path(root, paths.get("flat_policy"), "paths.flat_policy"),
             stand_policy=_resolve_optional_path(root, paths.get("stand_policy"), "paths.stand_policy"),
             # ``recovery_policy`` 是改名为 Init 之前的旧配置键。
             init_policy=_resolve_optional_path(
@@ -262,12 +274,14 @@ def load_config(path: str | Path, repository_root: str | Path | None = None) -> 
                 supervisor.get("init_confirm_time", supervisor.get("recovery_confirm_time"))
             ),
             action_blend_duration=float(supervisor["action_blend_duration"]),
+            terminate_on_tilt=supervisor.get("terminate_on_tilt", True),
         ),
         joint_names=joint_names,
         base_body_name=str(robot["base_body_name"]),
         base_joint_name=str(robot["base_joint_name"]),
         floor_geom_name=str(robot["floor_geom_name"]),
         terrain=TerrainConfig(**raw.get("terrain", {})),
+        locomotion_routing=ProprioceptionRoutingConfig(**raw.get("locomotion_routing", {})),
         init_controller=InitControllerConfig(**raw.get("init_controller", {})),
     )
 
@@ -286,8 +300,17 @@ def load_config(path: str | Path, repository_root: str | Path | None = None) -> 
     if init.mode == "pd" and cfg.control.mode != "explicit":
         raise ValueError("足端轨迹 Init 需要 control.mode = explicit")
 
-    if cfg.terrain.kind not in ("flat", "three_level"):
-        raise ValueError("terrain.kind must be flat or three_level")
+    if cfg.terrain.kind not in ("flat", "three_level", "stairs"):
+        raise ValueError("terrain.kind must be flat, three_level or stairs")
+    if cfg.terrain.kind == "stairs":
+        if type(cfg.terrain.step_count) is not int or cfg.terrain.step_count < 1:
+            raise ValueError("terrain.step_count must be a positive integer")
+        for name in ("step_height", "step_depth", "stair_width", "landing_length"):
+            value = getattr(cfg.terrain, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"terrain.{name} must be finite and positive")
+        if not math.isfinite(cfg.terrain.stair_start):
+            raise ValueError("terrain.stair_start must be finite")
     if not isinstance(cfg.terrain.seed, int) or cfg.terrain.seed < 0:
         raise ValueError("terrain.seed must be a nonnegative integer")
     if cfg.simulation.timestep <= 0.0 or cfg.simulation.decimation <= 0:
@@ -339,6 +362,8 @@ def load_config(path: str | Path, repository_root: str | Path | None = None) -> 
         raise ValueError("supervisor 的停止速度阈值不能小于零")
     if cfg.supervisor.fall_base_height <= 0.0 or cfg.supervisor.init_base_height <= 0.0:
         raise ValueError("supervisor 的高度阈值必须大于零")
+    if not isinstance(cfg.supervisor.terminate_on_tilt, bool):
+        raise ValueError("supervisor.terminate_on_tilt 必须为布尔值")
     if cfg.supervisor.fall_tilt <= 0.0 or cfg.supervisor.init_tilt < 0.0:
         raise ValueError("supervisor 的倾角阈值无效")
     if not 0.0 <= cfg.supervisor.init_start_max_tilt < cfg.supervisor.fall_tilt:

@@ -60,6 +60,8 @@ class CsvLogger:
                 # 以下三列用于回答“何时切换、实际运行哪个策略、切换完成了多少”。
                 "behavior_mode",
                 "behavior_policy",
+                "routing_reason",
+                "routing_tilt", "routing_peak_error", "routing_rms_error", "routing_clear_fraction",
                 "transition_alpha",
                 "feet_in_contact",
                 "init_phase",
@@ -107,6 +109,8 @@ class CsvLogger:
         raw_command: npt.NDArray[np.float32] | None = None,
         init_phase: str = "",
         init_progress: float = 0.0,
+        routing_reason: str = "",
+        routing_signals: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
     ) -> None:
         if self.writer is None:
             return
@@ -117,6 +121,11 @@ class CsvLogger:
             "time": float(robot.data.time),
             "behavior_mode": behavior_mode,
             "behavior_policy": behavior_policy,
+            "routing_reason": routing_reason,
+            "routing_tilt": routing_signals[0],
+            "routing_peak_error": routing_signals[1],
+            "routing_rms_error": routing_signals[2],
+            "routing_clear_fraction": routing_signals[3],
             "transition_alpha": transition_alpha,
             "feet_in_contact": robot.feet_in_contact(),
             "init_phase": init_phase,
@@ -190,6 +199,7 @@ class Sim2SimRunner:
                 stand=policies.stand,
                 init=policies.init,
                 waiting=ConstantPolicy(reset_action),
+                flat=policies.flat,
             )
         self.behavior_policies = policies
         self.model = load_model(config)
@@ -261,6 +271,10 @@ class Sim2SimRunner:
             ) / self.config.control.action_scale
         target = self.robot.desired_joint_position(action)
         torque = np.zeros_like(target)
+        # Walk always uses the single unified locomotion Actor.  The Supervisor
+        # still handles Init/Stand/STOPPING, but terrain difficulty never
+        # selects a second flat or stair expert.
+        terrain_router = None
         policy_steps = 0
         termination_reason = "duration"
         next_print_time = 0.0
@@ -407,6 +421,10 @@ class Sim2SimRunner:
                         torque,
                         behavior_mode=behavior_mode,
                         behavior_policy=behavior_policy,
+                        routing_reason=terrain_router.reason if terrain_router else "",
+                        routing_signals=(terrain_router.tilt, terrain_router.joint_error,
+                                         terrain_router.joint_error_rms, terrain_router.clear_fraction)
+                        if terrain_router else (0.0, 0.0, 0.0, 0.0),
                         transition_alpha=transition_alpha,
                         raw_command=raw_command_array,
                         init_phase=active_policy.phase if isinstance(active_policy, FootTrajectoryInit) else "",
@@ -481,7 +499,8 @@ class Sim2SimRunner:
     def _fall_reason(self) -> str | None:
         if self.robot.base_height() < self.config.termination.minimum_base_height:
             return "base_height"
-        if self.robot.tilt_angle() > self.config.termination.maximum_tilt:
+        if (self.config.supervisor.terminate_on_tilt
+                and self.robot.tilt_angle() > self.config.termination.maximum_tilt):
             return "bad_orientation"
         if self.robot.torso_touches_floor():
             return "torso_contact"
@@ -609,16 +628,17 @@ def _policy_path_text(policy: Policy | None, repository_root: Path) -> str:
 
 
 def _policy_paths_overlay(
-    policy_paths: tuple[str, str, str], behavior_policy: str,
+    policy_paths: tuple[str, ...], behavior_policy: str,
 ) -> str:
     """Three policy paths for the viewer's top-right corner."""
 
     active_name = {
         "default": "WALK", "locomotion": "WALK", "locomotion_fallback": "WALK",
         "stand": "STAND", "init": "INIT", "init_pd": "INIT",
+        "stairs": "WALK", "flat": "FLAT",
     }.get(behavior_policy)
     lines = ["Loaded policies (* = active):"]
-    for name, path in zip(("WALK", "STAND", "INIT"), policy_paths, strict=True):
+    for name, path in zip(("WALK", "STAND", "INIT", "FLAT")[:len(policy_paths)], policy_paths, strict=True):
         lines.append(f"{'*' if name == active_name else ' '} {name}: {path}")
     return "\n".join(lines)
 
@@ -631,7 +651,7 @@ def _update_viewer_overlay(
     torque: npt.NDArray[np.floating],
     behavior_mode: str,
     behavior_policy: str,
-    policy_paths: tuple[str, str, str],
+    policy_paths: tuple[str, ...],
 ) -> None:
     """更新 viewer 状态栏；旧版 MuJoCo 没有 set_texts 时静默跳过。
 

@@ -4,6 +4,8 @@
 
 | 当前要做的事 | 文档入口 |
 | --- | --- |
+| 理解当前上下楼梯工程、从零训练和续训 | [楼梯训练说明](STAIRS_TRAINING.md) |
+| 在 MuJoCo 中回放上下楼梯策略 | [楼梯 sim2sim](sim2sim/STAIRS_SIM2SIM.md) |
 | 开始实机接入，安装依赖和配置窗口 | [sim2real 使用说明](sim2real/README.md) |
 | 看懂窗口、三个 q、姿态和策略输出，排查问题 | [窗口图解使用与问题分析](sim2real/WINDOW_GUIDE.md) |
 | 按步骤完成网络、初始化、录制与部署准备 | [sim2real 操作手册](sim2real/OPERATION_GUIDE.md) |
@@ -25,6 +27,7 @@
 | `BPX-Locomotion-v0` | 平地前后、横向移动及偏航速度跟踪 | 20 秒 | 1500 | `logs/rsl_rl/bpx_locomotion/` |
 | `BPX-Locomotion-Rough-v0` | 平台复位、课程起伏地形上的盲走 | 20 秒（含边界截断） | 1500 | `logs/rsl_rl/bpx_rough/` |
 | `BPX-Locomotion-Rough-History-v0` | H=10 非对称观测历史的崎岖盲走 | 20 秒（含边界截断） | 1500 | `logs/rsl_rl/bpx_rough_history_asymmetric/` |
+| `BPX-Locomotion-Stairs-History-v0` | 上楼/下楼/平地混合；楼梯仅前进和后退 | 最多 40 秒 | 10000 | `logs/rsl_rl/bpx_stairs_history/` |
 | `BPX-Stand-v0` | 零速度指令下保持稳定站姿 | 15 秒 | 1500 | `logs/rsl_rl/bpx_stand/` |
 | `BPX-Stand-Rough-v0` | 崎岖区域复位、站稳课程训练 | 15 秒 | 1500 | `logs/rsl_rl/bpx_rough_stand/` |
 | `BPX-Init-v0` | 从腹部朝地的趴卧状态起身并保持站立 | 4 秒 | 3000 | `logs/rsl_rl/bpx_init/` |
@@ -35,6 +38,58 @@
 Init 针对腹部朝地、机身接近水平的趴姿训练，不覆盖侧翻或仰翻后的翻身恢复。原有任务使用平地场景；新增 Rough 任务使用课程起伏地形。
 
 历史版本的训练、观测布局和部署步骤见 [H=10 使用说明](ROUGH_HISTORY_TRAINING.md)。Actor 使用 450 维观测，Critic 使用 480 维观测，只有 Critic 接收基座线速度真值；旧的 48 维或对称 480 维 Actor checkpoint 不能直接恢复到该任务。
+
+## 当前上下楼梯工程怎么读
+
+当前训练的是**一个统一的行走策略**，同时覆盖上楼、下楼和平地。上楼/下楼由场地的高低方向决定；前进/后退由机身坐标系 `vx` 的正负决定，因此“后退上楼”和“前进下楼”是不同任务。Actor 只读取本体观测和指令历史，不读取地形高度或类别。
+
+从 [bpx_stairs_history_env_cfg.py](source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_stairs_history_env_cfg.py) 开始阅读：它把场景、指令、观测、奖励、终止条件和课程装配成一个环境。下面的路径均相对项目根目录。
+
+| 文件 | 负责什么 | 什么时候修改 |
+| --- | --- | --- |
+| `source/BPX_test/BPX_test/tasks/manager_based/bpx_test/bpx_stairs_history_env_cfg.py` | 楼梯任务总配置，450/480 维历史观测、奖励权重、地形与门槛 | 调整任务目标和训练参数 |
+| 同目录 `mdp/mixed_stairs_commands.py` | 每回合选择上楼/下楼/平地及前进/后退，生成速度指令 | 调整采样比例和速度范围 |
+| 同目录 `mdp/mixed_stairs_curriculum.py` | 累计实际运动、判断落稳和跟踪、独立升降级、保存课程状态 | 调整成功判定或课程升级 |
+| 同目录 `mdp/stairs_rewards.py` | 长时间悬脚、长时间支撑、踢台阶惩罚 | 调整足端行为约束 |
+| 同目录 `stairs_terrain_geometry.py` | 分级下楼台阶；上楼直接使用 Isaac Lab 原生倒金字塔 | 修改下楼台阶高度分布 |
+| 同目录 `agents/bpx_stairs_history_ppo_cfg.py` | PPO：48 步 rollout、初始学习率 3e-4、自适应调节 | 调整优化过程 |
+| `scripts/rsl_rl/train.py`、`curriculum_runner.py` | 启动 PPO、微调，以及模型/优化器/课程保存恢复 | 修改训练入口和续训行为 |
+| `scripts/test_mixed_stairs_curriculum.py` | 无需启动 Isaac Sim 的采样、课程、奖励和接口测试 | 修改训练逻辑后先运行 |
+| `scripts/validate_stairs_task.py` | 真实仿真、权重加载、两次 PPO 更新和恢复验证 | 修改环境装配后运行 |
+| `sim2sim/config/bpx_stairs_history.toml` | MuJoCo 场景及模型路径 | 回放导出策略；不控制训练 |
+
+```mermaid
+flowchart TD
+    A[train.py：加载环境与 PPO 配置] --> B[采样地形与指令，重置机器人]
+    B --> C[10 帧本体观测 → Actor → 12 个关节动作]
+    C --> D[物理步进、奖励、运动统计]
+    D --> E{回合结束？}
+    E -->|否| C
+    E -->|是| F[结算旧回合，更新该地形与方向的难度]
+    F --> B
+    D --> G[PPO 按 rollout 更新 Actor/Critic]
+    G --> H[checkpoint：权重、优化器、课程]
+    H --> I[导出 Actor → MuJoCo 回放]
+```
+
+课程有三条独立的进度：
+
+- **地形难度**：8 级；上楼/下楼的前进和后退分别保存等级，连续两次成功升级、两次未完成降级。
+- **楼梯方向**：stage 0 仅前进；满足成功率门槛后进入 stage 1，前进/后退各 50%。楼梯不采样侧走或转弯，平地仍保留全方向。
+- **地形采样比例**：初始上楼/下楼/平地为 30/30/40%；平地移动和站立质量达标后变成 40/40/20%。这是回合数比例，不是仿真步数比例。
+
+楼梯到外圈平台并连续落稳 0.4 秒结束；平地稳定 1 秒只作为质量条件，继续训练到边界或 40 秒时限；物理失败也会结束回合。成功还要通过实际速度跟踪检查，原地不转不能通过纯旋转指令。
+
+最短的从零训练入口（先激活本机 Isaac Lab 环境）：
+
+```bash
+python scripts/rsl_rl/train.py --task BPX-Locomotion-Stairs-History-v0 \
+  --num_envs 512 --max_iterations 10000 --headless
+```
+
+`--finetune /path/to/model.pt` 复用相同接口的权重，重新建立优化器和课程；`--resume --checkpoint /path/to/model.pt` 恢复新版楼梯训练状态，须保持环境数和统计窗口一致。旧课程使用 `--finetune`。详细的速度、地形、成功判据、曲线解释和命令见 [楼梯训练说明](STAIRS_TRAINING.md)。
+
+本次整理已将旧的 `mdp/stairs_commands.py`、`mdp/stairs_curriculum.py` 中仍需使用的逻辑合并至 `mixed_stairs_*`，删除停用的单独上楼/侧走/转弯课程。旧 `scripts/test_stairs_curriculum.py` 的奖励和接口检查已合并至当前测试入口。保留 `rough_curriculum.py` 等公共依赖、其他任务、模型与实验记录。
 
 ## 项目结构
 
@@ -47,6 +102,8 @@ BPX_test/
 │       └── tasks/manager_based/bpx_test/
 │           ├── bpx_base_env_cfg.py  # 公共机器人、场景、观测与动作
 │           ├── bpx_locomotion_env_cfg.py
+│           ├── bpx_stairs_history_env_cfg.py # 上下楼梯混合训练总配置
+│           ├── stairs_terrain_geometry.py # 下楼分级台阶
 │           ├── bpx_rough_env_cfg.py # 崎岖行走与地形配置
 │           ├── bpx_rough_stand_env_cfg.py # 崎岖站立与站稳课程
 │           ├── rough_terrain_geometry.py # 起伏地形网格生成
@@ -58,10 +115,13 @@ BPX_test/
 │   ├── list_envs.py                 # 列出已注册的 BPX 任务
 │   ├── zero_agent.py               # 零动作环境检查
 │   ├── random_agent.py             # 随机动作环境检查
+│   ├── test_mixed_stairs_curriculum.py # 楼梯 CPU 回归测试
+│   ├── validate_stairs_task.py      # 楼梯真实仿真和 PPO 验证
 │   ├── validate_rough_task.py       # 崎岖行走配置与课程验证
 │   ├── validate_rough_stand_task.py # 崎岖站立重置、奖励与课程验证
 │   └── rsl_rl/                     # 训练、回放与策略导出
 ├── sim2sim/
+│   ├── config/bpx_stairs_history.toml # 上下楼梯回放
 │   ├── config/bpx_flat.toml         # 平地、趴姿起身流程
 │   ├── config/bpx_terrain.toml      # 三级地形、趴姿起身流程
 │   ├── config/bpx_terrain_standing.toml # 三级地形、站姿直接测试
@@ -95,6 +155,37 @@ python scripts/check_dependencies.py                # 检查训练环境（默�
 python scripts/check_dependencies.py --mode sim2sim # 检查 MuJoCo 推理环境
 ```
 
+快速检查包含训练 Python、Isaac Lab/Sim 模块路径、RSL-RL 接口版本、USD 文件、驱动查询和实际 CUDA 运算。失败返回 `1`，通过返回 `0`。它不启动仿真；要判断当前楼梯任务是否能真正进入训练，可执行：
+
+```bash
+conda activate isaaclab
+python scripts/check_dependencies.py --smoke-test
+```
+
+`--smoke-test` 默认使用楼梯任务、`cuda:0`、4 个环境，调用真实训练入口执行两轮 PPO，并核对最终 checkpoint。可用 `--task BPX-Stand-v0`、`--device cuda:1`、`--num-envs 4`、`--timeout 1200` 调整。日志和模型存入独立的 `outputs/training_env_check/check_*/`，正式训练日志不受影响。首次启动可能需要下载仿真扩展；请先按 Isaac Sim 提示完成首次许可接受。
+
+一键补齐**当前已激活的 Isaac Lab 环境**中的训练工具、RSL-RL 和本项目扩展：
+
+```bash
+bash scripts/install_training_deps.sh --dry-run  # 可选：预览命令
+bash scripts/install_training_deps.sh
+# 安装后同时验证真实训练链路
+bash scripts/install_training_deps.sh --smoke-test
+```
+
+新机器尚未安装 Isaac Lab/Sim 时，先准备 Python 3.11 独立环境，再使用完整安装模式：
+
+```bash
+conda create -n bpx-training python=3.11 -y
+conda activate bpx-training
+bash scripts/install_training_deps.sh --full
+python scripts/check_dependencies.py --smoke-test
+```
+
+完整模式按 [Isaac Lab v2.2.1 官方安装说明](https://isaac-sim.github.io/IsaacLab/v2.2.1/source/setup/installation/pip_installation.html) 固定使用 Isaac Sim 5.0.0、PyTorch 2.7.0 CUDA 12.8、torchvision 0.22.0 和 RSL-RL 2.3.3。默认将 Lab v2.2.1 源码克隆至 `.deps/IsaacLab-2.2.1`；也可通过 `--isaaclab /path/to/IsaacLab` 或 `ISAACLAB_PATH` 复用 v2.2.1 源码，通过 `--python /path/to/python` 指定安装目标。完整模式需要 Linux x86_64，下载量与磁盘占用较大。
+
+脚本只安装 Python 训练依赖；NVIDIA 驱动及完整 BPX USD 资产需自行准备。最终检查若发现驱动、CUDA 或资产问题仍返回非零退出码，并给出原因。现有二进制 Sim 安装应先正常激活其 Conda 环境，使 Sim/torch 的 `PYTHONPATH` 和动态库路径生效，再用默认补齐模式。
+
 ### 安装训练扩展
 
 将本项目放在 Isaac Lab 安装目录之外，并在 Isaac Lab 对应环境中执行：
@@ -104,7 +195,7 @@ python -m pip install -e source/BPX_test
 python scripts/list_envs.py
 ```
 
-`list_envs.py` 应列出上表中的七个任务。项目安装脚本不会自动安装完整的 Isaac Lab / Isaac Sim 运行环境；若使用 Isaac Lab 自带的启动脚本，可将命令中的 `python` 替换为 `/path/to/IsaacLab/isaaclab.sh -p`。
+`list_envs.py` 应列出上表中的八个任务。项目安装脚本不会自动安装完整的 Isaac Lab / Isaac Sim 运行环境；若使用 Isaac Lab 自带的启动脚本，可将命令中的 `python` 替换为 `/path/to/IsaacLab/isaaclab.sh -p`。
 
 **首次克隆后请检查机器人资产。** 训练需要 `source/BPX_test/BPX_test/BPX_structure/usd/bpx.usd` 及其引用的 USD 文件。仓库的 `.gitignore` 忽略了 USD 文件，因此仅克隆代码可能缺少这些资产。需要复制完整 USD 资产，或使用 Isaac Lab 的 URDF 转换工具，参照 [转换配置](source/BPX_test/BPX_test/BPX_structure/usd/config.yaml) 从 `BPX_structure/bpx/urdf/bpx.urdf` 重新生成；保留足端固定关节对应的独立刚体，并保持转换参数与训练配置一致。
 
@@ -169,7 +260,7 @@ python scripts/rsl_rl/train.py --task BPX-Stand-v0 --headless
 python scripts/rsl_rl/train.py --task BPX-Init-v0 --headless
 ```
 
-默认并行环境数为 2048，可通过 `--num_envs 512` 等参数降低显存占用。训练默认使用三层 `[128, 128, 128]` 的 ELU 网络，每个环境每轮采集 24 步，每 50 次迭代保存一次检查点；`--max_iterations` 可覆盖任务的默认迭代数。
+默认并行环境数为 2048，可通过 `--num_envs 512` 等参数降低显存占用。训练默认使用三层 `[128, 128, 128]` 的 ELU 网络，普通任务每个环境每轮采集 24 步（楼梯为 48 步），每 50 次迭代保存一次检查点；`--max_iterations` 可覆盖任务的默认迭代数。
 
 常用参数还包括 `--seed`、`--run_name`、`--experiment_name` 和 `--logger`。训练结果保存在 `logs/rsl_rl/<实验名>/<时间戳>[_运行名]/`，其中 `params/` 记录本次运行的环境和算法配置。
 
@@ -211,7 +302,7 @@ python scripts/rsl_rl/train.py \
     --task BPX-Locomotion-Rough-History-v0 --num_envs 2048 --headless
 ```
 
-`--resume --checkpoint` 加载训练状态，不是导出模型；只用于输入维度相同的检查点。`--max_iterations` 表示本次训练的迭代数；新日志分别写入 `bpx_rough` 和 `bpx_rough_stand`。PPO 检查点不保存地形课程状态，恢复训练后课程从最低级开始。
+`--resume --checkpoint` 加载训练状态，不是导出模型；只用于输入维度相同的检查点。`--max_iterations` 表示本次训练的迭代数；新日志分别写入 `bpx_rough` 和 `bpx_rough_stand`。上述 Rough 任务不保存地形课程状态，恢复训练后课程从最低级开始；楼梯任务通过 `CurriculumOnPolicyRunner` 单独保存和恢复课程。
 
 详细参数与评估方法见 [崎岖行走训练](ROUGH_TERRAIN_TRAINING.md) 和 [崎岖站立训练](ROUGH_STAND_TRAINING.md)。需要检查实现时可运行：
 
@@ -267,7 +358,7 @@ python scripts/rsl_rl/play.py \
 
 ### 配置模型路径
 
-根据运行流程选择配置；四个 TOML 相互独立，不会继承或同步策略路径：
+根据运行流程选择配置；各 TOML 相互独立，不会继承或同步策略路径：
 
 | 配置 | 地形 / 初始姿态 | 用途 |
 | --- | --- | --- |
@@ -275,8 +366,9 @@ python scripts/rsl_rl/play.py \
 | [bpx_terrain.toml](sim2sim/config/bpx_terrain.toml) | 三级起伏地形 / 趴姿 | 手柄 RB 起身、崎岖行走与站立切换 |
 | [bpx_terrain_standing.toml](sim2sim/config/bpx_terrain_standing.toml) | 三级起伏地形 / 站姿 | 直接测试行走策略；文件名中的 standing 指初始姿态 |
 | [bpx_terrain_history.toml](sim2sim/config/bpx_terrain_history.toml) | 三级起伏地形 / 趴姿 | H=10 历史观测行走和崎岖站立策略验证，配合 `--supervisor --auto-init` 无手柄起身 |
+| [bpx_stairs_history.toml](sim2sim/config/bpx_stairs_history.toml) | 六级 15 cm 实体楼梯、20 cm 踏面 / 趴姿 | PD 起身后接楼梯历史策略，经过 90 cm 顶平台再下楼；见[运行说明](sim2sim/STAIRS_SIM2SIM.md) |
 
-编辑实际传给 `--config` 的文件的 `[paths]`，将 `locomotion_policy`、`stand_policy` 指向各自导出的 `policy.onnx`；使用 TorchScript 时同时更新 `torchscript_policy`。四份内置配置的 `[init_controller]` 均设为 `mode = "pd"`，不会加载 `init_policy`；仅切回 RL Init 时需要该模型。
+编辑实际传给 `--config` 的文件的 `[paths]`，将 `locomotion_policy`、`stand_policy` 指向各自导出的 `policy.onnx`；使用 TorchScript 时同时更新 `torchscript_policy`。内置配置的 `[init_controller]` 均设为 `mode = "pd"`，不会加载 `init_policy`；仅切回 RL Init 时需要该模型。
 
 配置中的相对路径均相对于项目根目录解析。默认文件记录了具体实验目录，且 `logs/` 被 Git 忽略，因此这些检查点不保证随代码仓库提供，也不会自动切换到新训练的模型。
 
@@ -431,6 +523,8 @@ python -m pip install pre-commit
 pre-commit run --all-files
 ```
 
+- [上下楼梯混合训练与工程说明](STAIRS_TRAINING.md)
+- [上下楼梯 MuJoCo 回放](sim2sim/STAIRS_SIM2SIM.md)
 - [崎岖行走课程与微调](ROUGH_TERRAIN_TRAINING.md)
 - [H=10 历史观测使用说明](ROUGH_HISTORY_TRAINING.md)
 - [崎岖站立课程与历史观测训练](ROUGH_STAND_TRAINING.md)

@@ -28,6 +28,8 @@ parser.add_argument(
 )
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
+parser.add_argument("--finetune", type=str, default=None,
+                    help="Warm-start actor/critic from this checkpoint, with a new optimizer and iteration zero.")
 parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
@@ -79,7 +81,7 @@ import torch
 from datetime import datetime
 
 import omni
-from rsl_rl.runners import OnPolicyRunner
+from curriculum_runner import CurriculumOnPolicyRunner
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -110,6 +112,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     """Train with RSL-RL agent."""
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
+    if args_cli.finetune and agent_cfg.resume:
+        raise ValueError("--finetune 和 --resume 不能同时使用")
+    finetune_path = args_cli.finetune
+    if finetune_path:
+        finetune_path = os.path.abspath(os.path.expanduser(finetune_path))
+        if not os.path.isfile(finetune_path):
+            raise FileNotFoundError(f"Fine-tuning checkpoint does not exist: {finetune_path}")
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
@@ -186,7 +195,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     # create runner from rsl-rl
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    runner = CurriculumOnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
@@ -194,6 +203,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+    elif finetune_path:
+        print(f"[INFO]: Fine-tuning weights from: {finetune_path} (new optimizer, iteration 0)")
+        runner.load(finetune_path, load_optimizer=False)
+        runner.current_learning_iteration = 0
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
@@ -204,7 +217,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # Init 的观测信号由 episode 时间生成，必须从 phase=0 开始；否则随机起始步会让
     # 策略在还未收到“开始起身”的阶段信号时直接进入中途参考轨迹。
     init_at_random_ep_len = not (
-        args_cli.task is not None and args_cli.task.lower().endswith("-init-v0")
+        args_cli.task is not None and (
+            args_cli.task.lower().endswith("-init-v0") or "stairs-history" in args_cli.task.lower())
     )
     runner.learn(
         num_learning_iterations=agent_cfg.max_iterations,

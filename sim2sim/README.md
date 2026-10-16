@@ -2,6 +2,8 @@
 
 本目录在 MuJoCo 中运行 BPX 行走和站立策略。`PD_Init` 分支的起身默认采用足端轨迹插值 + 解析 IK + PD；设计原理、排错过程和历史实验见 [完整工作流](BPX_SIM2SIM_WORKFLOW.md)。
 
+六级 15 cm 实体楼梯、20 cm 踏面（先 PD 起身，再用楼梯历史策略上楼与下楼）见 [楼梯 sim2sim](STAIRS_SIM2SIM.md)，配置为 `config/bpx_stairs_history.toml`。
+
 ## 1. 准备环境与模型
 
 所有命令在项目根目录执行。MuJoCo 环境可与 Isaac Lab 分开；配置读取使用 `tomllib`，需要 Python 3.11+：
@@ -101,7 +103,7 @@ python sim2sim/run_mujoco.py --backend onnx --viewer --gamepad --supervisor \
 
 普通行走切换使用指令活跃度 `max(abs(command) / [1.0, 0.5, 1.0])`：进入阈值 0.12、持续 0.15 秒；退出阈值 0.05、持续 0.30 秒，且 WALK 至少驻留 0.30 秒。STOPPING 在低速持续 0.20 秒或停止等待达到 1.50 秒后转 Stand；指令恢复也可回到 Walk。不同策略对象间默认用 0.30 秒混合 action。
 
-未站立判定为高度 <0.20 m 或倾角 >0.70 rad。仅当高度低且倾角 <0.35 rad、Init 控制器可用时，进入起身等待；不会把任意跌倒自动送入 Init。Init 倾角达到 0.55 rad 时中止。
+未站立判定为高度 <0.20 m 或倾角 >0.70 rad。 楼梯配置设为 `terminate_on_tilt=false` 时，仅倾角超限不会触发该判定；其他配置默认启用。仅当高度低且倾角 <0.35 rad、Init 控制器可用时，进入起身等待；不会把任意跌倒自动送入 Init。Init 倾角达到 0.55 rad 时中止。
 
 PD Init 先完成轨迹，再检查起身完成条件：高度 >0.36 m、倾角 <0.25 rad、平面速度 <0.05 m/s、角速度模长 <0.10 rad/s、四足接触，连续保持 0.50 秒。部署端当前不检查训练奖励中的前足宽度，完成条件与训练 `recovered` 并不完全相同。
 

@@ -22,7 +22,7 @@ from bpx_sim2sim.gamepad import (
     enumerate_gamepads,
     select_gamepad,
 )
-from bpx_sim2sim.policy import SingleFrameOnnxPolicy, StandOnnxPolicy, create_policy
+from bpx_sim2sim.policy import OnnxPolicy, SingleFrameOnnxPolicy, StandOnnxPolicy, create_policy
 from bpx_sim2sim.runner import Sim2SimRunner
 from bpx_sim2sim.supervisor import BehaviorSupervisor
 

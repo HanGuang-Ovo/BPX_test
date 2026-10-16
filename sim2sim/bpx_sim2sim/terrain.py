@@ -1,4 +1,4 @@
-"""Deterministic three-level test course; no terrain information enters the policy."""
+"""Wave and solid stair courses; no terrain information enters the policy."""
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 import mujoco
 import numpy as np
 
-from .config import Sim2SimConfig
+from .config import Sim2SimConfig, TerrainConfig
 
 # One continuous heightfield includes flat shoulders, avoiding internal collider seams.
 X_MIN, X_MAX = -3.0, 11.0
@@ -46,7 +46,30 @@ def course_heights(seed: int) -> np.ndarray:
     return amplitude * roughness
 
 
-def region_at(x: float, y: float) -> str:
+def stair_landmarks(terrain: TerrainConfig) -> tuple[float, float, float, float]:
+    """First riser, top start, first descending riser and return to ground."""
+    start = terrain.stair_start
+    top_start = start + (terrain.step_count - 1) * terrain.step_depth
+    top_end = top_start + terrain.landing_length
+    end = top_end + (terrain.step_count - 1) * terrain.step_depth
+    return start, top_start, top_end, end
+
+
+def region_at(x: float, y: float, terrain: TerrainConfig | None = None) -> str:
+    if terrain is not None and terrain.kind == "stairs":
+        start, top_start, top_end, end = stair_landmarks(terrain)
+        if abs(y) > terrain.stair_width / 2:
+            return "FLAT / RETURN PATH"
+        if x < start:
+            return "STAIRS / APPROACH"
+        if x < top_start:
+            return f"STAIRS / ASCENT / STEP {int((x - start) / terrain.step_depth) + 1}"
+        if x < top_end:
+            return "STAIRS / TOP LANDING"
+        if x < end:
+            level = terrain.step_count - 1 - int((x - top_end) / terrain.step_depth)
+            return f"STAIRS / DESCENT / HEIGHT LEVEL {level}"
+        return "STAIRS / EXIT"
     if not (-2 <= x <= 10 and abs(y) <= 2):
         return "FLAT / RETURN PATH"
     if x <= 2:
@@ -71,7 +94,32 @@ def load_model(config: Sim2SimConfig) -> mujoco.MjModel:
     world = root.find("worldbody")
     floor = world.find(f"geom[@name='{config.floor_geom_name}']")
     if floor is None or floor.get("type") != "plane":
-        raise ValueError("Three-level course requires a named world plane in the source MJCF")
+        raise ValueError("Terrain courses require a named world plane in the source MJCF")
+    if config.terrain.kind == "stairs":
+        terrain = config.terrain
+        start, top_start, top_end, end = stair_landmarks(terrain)
+        # Plane contacts are unbounded, but MuJoCo ray queries use its visual
+        # half-sizes. Cover both landings and side return paths for supervision.
+        floor.set("size", f"{max(50, abs(start) + 10, abs(end) + 10)} {max(50, terrain.stair_width / 2 + 10)} 0.1")
+        # Stacked solid slabs expose vertical risers; no heightfield interpolation
+        # or ramps. Each slab also forms the matching stair on the descending side.
+        ground_attributes = {key: floor.get(key) for key in
+                             ("friction", "condim", "solref", "solimp") if floor.get(key) is not None}
+        for index in range(terrain.step_count):
+            left = start + index * terrain.step_depth
+            right = end - index * terrain.step_depth
+            ET.SubElement(
+                world, "geom", name=f"{GROUND_PREFIX}stair_{index + 1}", type="box",
+                pos=f"{(left + right) / 2} 0 {(index + 0.5) * terrain.step_height}",
+                size=f"{(right - left) / 2} {terrain.stair_width / 2} {terrain.step_height / 2}",
+                rgba=("0.32 0.48 0.63 1" if index % 2 == 0 else "0.48 0.64 0.77 1"),
+                group="5", **ground_attributes,
+            )
+        model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
+        model.stat.center[:] = ((start + end) / 2, 0, terrain.step_count * terrain.step_height / 2)
+        model.stat.extent = max(end - min(start, 0) + 3, terrain.stair_width + 4)
+        model.vis.map.znear = 0.001
+        return model
     heights = course_heights(config.terrain.seed)
     # Encode metres into [0, 1] without clipping peaks or filling valleys.
     elevation_scale = 2.0 * MODERATE_AMPLITUDE
@@ -121,20 +169,39 @@ def add_course_labels(viewer, config: Sim2SimConfig) -> None:
     with viewer.lock():
         # MuJoCo hides visual groups 3–5 by default; group 5 contains queryable ground.
         viewer.opt.geomgroup[5] = 1
-        if config.terrain.kind != "three_level":
+        if config.terrain.kind == "stairs":
+            start, top_start, top_end, end = stair_landmarks(config.terrain)
+            viewer.cam.lookat[:] = ((start + end) / 2, 0, 0.2)
+            viewer.cam.distance = max(end + 2, 8)
+            viewer.cam.azimuth = 110
+            viewer.cam.elevation = -30
+            labels = (
+                (start - 1, "PD INIT / APPROACH"),
+                ((start + top_start) / 2, f"UP {config.terrain.step_count} x {100 * config.terrain.step_height:g} cm"),
+                ((top_start + top_end) / 2, f"TOP {100 * config.terrain.step_count * config.terrain.step_height:g} cm"),
+                ((top_end + end) / 2, f"DOWN {config.terrain.step_count} x {100 * config.terrain.step_height:g} cm"),
+                (end + 1, "EXIT"),
+            )
+            label_y = config.terrain.stair_width / 2 + 0.3
+            label_z = config.terrain.step_count * config.terrain.step_height + 0.25
+        elif config.terrain.kind == "three_level":
+            viewer.cam.lookat[:] = (4.0, 0.0, 0.0)
+            viewer.cam.distance = 15.0
+            viewer.cam.azimuth = 90.0
+            viewer.cam.elevation = -55.0
+            labels = ((0, "LEVEL 0 | FLAT"), (4, f"LEVEL 1 | MILD | +/-{100 * MILD_AMPLITUDE:g} cm"),
+                      (8, f"LEVEL 2 | MODERATE | +/-{100 * MODERATE_AMPLITUDE:g} cm"))
+            label_y = 2.3
+            label_z = 0.45
+        else:
             return
-        viewer.cam.lookat[:] = (4.0, 0.0, 0.0)
-        viewer.cam.distance = 15.0
-        viewer.cam.azimuth = 90.0
-        viewer.cam.elevation = -55.0
         scene = viewer.user_scn
-        for x, text in ((0, "LEVEL 0 | FLAT"), (4, f"LEVEL 1 | MILD | +/-{100 * MILD_AMPLITUDE:g} cm"),
-                        (8, f"LEVEL 2 | MODERATE | +/-{100 * MODERATE_AMPLITUDE:g} cm")):
+        for x, text in labels:
             if scene.ngeom >= scene.maxgeom:
                 raise RuntimeError("Viewer has insufficient capacity for course labels")
             geom = scene.geoms[scene.ngeom]
             mujoco.mjv_initGeom(geom, mujoco.mjtGeom.mjGEOM_LABEL, np.zeros(3),
-                               np.array([x, 2.3, 0.45]), np.eye(3).ravel(),
+                               np.array([x, label_y, label_z]), np.eye(3).ravel(),
                                np.array([1., 1., 1., 1.], dtype=np.float32))
             geom.label = text
             scene.ngeom += 1

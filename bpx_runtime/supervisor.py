@@ -37,6 +37,9 @@ class SupervisorConfig:
     init_tilt: float
     init_confirm_time: float
     action_blend_duration: float
+    # Simulation can continue through locomotion tilt excursions. Init keeps
+    # its separate pose checks and init_abort_tilt regardless of this flag.
+    terminate_on_tilt: bool = True
 
     @property
     def recovery_base_height(self) -> float:
@@ -174,7 +177,7 @@ class BehaviorSupervisor:
         # Init 只覆盖低高度且机身接近水平的腹部朝地趴卧状态。侧翻/仰翻超出了当前
         # 训练分布，即使模型存在也进入 DISABLED，避免错误动作让机器人进一步碰撞。
         low_height = state.base_height < self.config.fall_base_height
-        excessive_tilt = state.tilt > self.config.fall_tilt
+        excessive_tilt = self.config.terminate_on_tilt and state.tilt > self.config.fall_tilt
         not_standing = low_height or excessive_tilt
         prone_for_init = low_height and state.tilt < self.config.init_start_max_tilt
         if self.mode not in (
@@ -195,7 +198,7 @@ class BehaviorSupervisor:
                 mode_changed = self._transition(
                     BehaviorMode.DISABLED, "not_standing_without_init"
                 ) or mode_changed
-            elif not low_height and state.tilt < self.config.fall_tilt:
+            elif not low_height and (not self.config.terminate_on_tilt or state.tilt < self.config.fall_tilt):
                 mode_changed = self._transition(BehaviorMode.STAND, "already_standing") or mode_changed
             elif not prone_for_init:
                 mode_changed = self._transition(
