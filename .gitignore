@@ -5,16 +5,16 @@
 **/*.log*
 
 # Omniverse
-**/*.dmp
-**/.thumbs
+#**/*.dmp
+#**/.thumbs
 
-# No USD files allowed in the repo
-**/*.usd
-**/*.usda
-**/*.usdc
-**/*.usdz
+# 机器人 USD 资产纳入版本控制（服务器 clone 后可直接训练）
+#**/*.usd
+#**/*.usda
+#**/*.usdc
+#**/*.usdz
 
-# Python
+# Python（仅忽略解释器自动生成的缓存/打包产物）
 .DS_Store
 **/*.egg-info/
 **/__pycache__/
@@ -23,13 +23,13 @@
 **/*.pb
 
 # Docker/Singularity
-**/*.sif
-docker/cluster/exports/
-docker/.container.cfg
+#**/*.sif
+#docker/cluster/exports/
+#docker/.container.cfg
 
 # IDE
-**/.idea/
-**/.vscode/
+#**/.idea/
+#**/.vscode/
 # Don't ignore the top-level .vscode directory as it is
 # used to configure VS Code settings
 !.vscode
